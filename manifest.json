@@ -1,0 +1,11 @@
+{
+    "display_name": "Chamber of Secrets",
+    "loading_order": 100,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "aceeenvw",
+    "version": "2.2.2",
+    "auto_update": false
+}

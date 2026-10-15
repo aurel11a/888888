@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300">
+
+<defs>
+<radialGradient id="spark">
+<stop offset="0%" stop-color="#ff5a75" stop-opacity="0.8"></stop>
+<stop offset="100%" stop-color="#ff5a75" stop-opacity="0"></stop>
+</radialGradient>
+</defs>
+
+<!-- фон -->
+<rect width="400" height="300" rx="12" fill="#0d0508"></rect>
+
+<!-- частицы -->
+<circle cx="60" cy="50" r="1.2" fill="#ff6b81"></circle>
+<circle cx="60" cy="50" r="7" fill="url(#spark)" opacity="0.3"></circle>
+
+<circle cx="330" cy="70" r="1.2" fill="#ff6b81"></circle>
+<circle cx="330" cy="70" r="7" fill="url(#spark)" opacity="0.3"></circle>
+
+<circle cx="90" cy="220" r="1.2" fill="#ff6b81"></circle>
+<circle cx="90" cy="220" r="7" fill="url(#spark)" opacity="0.3"></circle>
+
+<circle cx="310" cy="230" r="1.2" fill="#ff6b81"></circle>
+<circle cx="310" cy="230" r="7" fill="url(#spark)" opacity="0.3"></circle>
+
+<!-- контур файла (увеличенный + пунктир) -->
+<g transform="translate(200 110)" stroke="#7a3a45" stroke-width="2.5" fill="none" stroke-dasharray="6 6" opacity="0.65">
+
+<path d="
+M-55 -65
+L35 -65
+L60 -40
+L60 65
+L-55 65
+Z"></path>
+
+<path d="
+M35 -65
+L35 -40
+L60 -40"></path>
+
+</g>
+
+<!-- значок ошибки -->
+<g transform="translate(200 115)">
+<circle r="34" fill="none" stroke="#d81b3a" stroke-width="5"></circle>
+<path d="M0 -17 L0 6" stroke="#ff7a95" stroke-width="6" stroke-linecap="round"></path>
+<circle cy="18" r="4" fill="#ff7a95"></circle>
+</g>
+
+<!-- текст -->
+<text x="200" y="195" text-anchor="middle" fill="#ff7a95" font-size="15" font-family="Segoe UI" font-weight="600">
+Ошибка генерации
+</text>
+
+<text x="200" y="215" text-anchor="middle" fill="#7a3845" font-size="11" font-family="Segoe UI">
+Попробуйте снова
+</text>
+
+</svg>
