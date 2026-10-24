@@ -2486,3 +2486,20 @@
     .iig-lightbox-prev { left: 22%; }
     .iig-lightbox-next { right: 22%; }
 }
+
+/* ── Телефоны ── */
+/* Сетка аватарок: Safari на iPhone сжимал картинки в полоски (aspect-ratio внутри flex-колонки
+   в прокручиваемой сетке). Картинка больше не сжимается, строки — по содержимому. */
+.qs-avatar-grid { grid-auto-rows: max-content; align-content: start; }
+.qs-avatar-item { min-width: 0; }
+.qs-avatar-item-img, .qs-avatar-auto-icon { flex-shrink: 0; height: auto; min-height: 48px; }
+
+/* Шторка гардероба и быстрых настроек: одна высота на всех вкладках (не прыгает вниз,
+   когда содержимого мало) и отступ под полоску «домой» на iPhone. */
+#vw-panel, #qs-panel { padding-bottom: env(safe-area-inset-bottom, 0px); box-sizing: border-box; }
+@media (max-width: 699px) {
+    #vw-panel { height: 88vh; height: 88dvh; }
+}
+@media (max-width: 579px) {
+    #qs-panel { height: 88vh; height: 88dvh; }
+}
