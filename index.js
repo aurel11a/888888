@@ -1191,6 +1191,10 @@ const defaultSettings = Object.freeze({
     // с sillyimages, поэтому его стили переносятся при копировании настроек.
     styles: [],
     activeStyleId: '',
+    // Инструкция перед референсами (как в sillyimages): уходит в начало промпта,
+    // только когда к запросу прикреплены картинки-референсы.
+    refInstructionEnabled: true,
+    refInstruction: '',
     // Профили подключения: [{ id, name, ...CONNECTION_FIELDS }].
     connectionProfiles: [],
     activeConnectionProfileId: '',
@@ -1513,6 +1517,16 @@ function getActiveStyle(settings = getSettings()) {
 function resolveEffectiveStyle(tagStyle, settings = getSettings()) {
     const libraryStyle = String(getActiveStyle(settings)?.value || '').trim();
     return libraryStyle || String(tagStyle || '').trim();
+}
+
+/* ── Инструкция перед референсами ── */
+
+const DEFAULT_REF_INSTRUCTION = '[CRITICAL: The reference image(s) above show the EXACT appearance of the character(s). You MUST precisely copy their: face structure, eye color, hair color and style, skin tone, body type, clothing, and all distinctive features. Do not deviate from the reference appearances.]';
+
+// Пустое поле = стандартный текст; выключено = ничего.
+function getRefInstruction(settings = getSettings()) {
+    if (settings.refInstructionEnabled === false) return '';
+    return String(settings.refInstruction || '').trim() || DEFAULT_REF_INSTRUCTION;
 }
 
 /* ── Лимит референсов под модель ── */
@@ -1892,7 +1906,8 @@ async function generateImageGemini(prompt, style, referenceImages = [], options 
     }
 
     let fullPrompt = style ? `[Style: ${style}] ${prompt}` : prompt;
-    fullPrompt = `${refInstruction}${fullPrompt}`;
+    const userRefInstruction = sliced.length > 0 ? getRefInstruction(settings) : '';
+    fullPrompt = `${userRefInstruction ? `${userRefInstruction}\n\n` : ''}${refInstruction}${fullPrompt}`;
     rememberFinalPrompt(fullPrompt);
     parts.push({ text: fullPrompt });
     const body = {
@@ -1929,11 +1944,13 @@ async function generateImageNaistera(prompt, style, options = {}) {
     const settings = getSettings();
     const endpoint = settings.endpoint.replace(/\/$/, '');
     const url = endpoint.endsWith('/api/generate') ? endpoint : `${endpoint}/api/generate`;
-    const fullPrompt = style ? `[Style: ${style}] ${prompt}` : prompt;
+    const referenceImages = options.referenceImages || [];
+    let fullPrompt = style ? `[Style: ${style}] ${prompt}` : prompt;
+    const userRefInstruction = referenceImages.length > 0 ? getRefInstruction(settings) : '';
+    if (userRefInstruction) fullPrompt = `${userRefInstruction}\n\n${fullPrompt}`;
     rememberFinalPrompt(fullPrompt);
     const aspectRatio = options.aspectRatio || settings.naisteraAspectRatio || '1:1';
     const preset = options.preset || settings.naisteraPreset || null;
-    const referenceImages = options.referenceImages || [];
     const body = { prompt: fullPrompt, aspect_ratio: aspectRatio };
     if (preset) body.preset = preset;
     if (referenceImages.length > 0) body.reference_images = referenceImages.slice(0, 4);
@@ -3398,6 +3415,17 @@ function createSettingsUI() {
                                 <i class="fa-solid fa-plus"></i> Добавить
                             </div>
                         </div>
+
+                        <div class="iig-ref-instruction">
+                            <h5><i class="fa-solid fa-terminal"></i> Инструкция перед референсами</h5>
+                            <p class="hint">Добавляется в начало промпта, когда в генерацию уходят картинки-референсы (Gemini, Naistera). Помогает модели точно копировать внешность.</p>
+                            <label class="checkbox_label">
+                                <input type="checkbox" id="iig_ref_instruction_enabled" ${settings.refInstructionEnabled !== false ? 'checked' : ''}>
+                                <span>Отправлять инструкцию</span>
+                            </label>
+                            <textarea id="iig_ref_instruction" class="text_pole" rows="4" ${settings.refInstructionEnabled === false ? 'disabled' : ''}>${sanitizeForHtml(String(settings.refInstruction || '').trim() || DEFAULT_REF_INSTRUCTION)}</textarea>
+                            <div id="iig_ref_instruction_reset" class="menu_button"><i class="fa-solid fa-rotate-left"></i> Вернуть стандартный текст</div>
+                        </div>
                     </div>
 
                     <hr>
@@ -3868,6 +3896,26 @@ function bindSettingsEvents() {
         settings.enabled = e.target.checked;
         saveSettings();
         updateHeaderStatusDot();
+    });
+
+    document.getElementById('iig_ref_instruction_enabled')?.addEventListener('change', (e) => {
+        settings.refInstructionEnabled = e.target.checked;
+        const area = document.getElementById('iig_ref_instruction');
+        if (area) area.disabled = !e.target.checked;
+        saveSettings();
+    });
+    document.getElementById('iig_ref_instruction')?.addEventListener('input', (e) => {
+        // Стандартный текст храним пустой строкой: тогда обновления текста по умолчанию доедут.
+        const text = e.target.value.trim();
+        settings.refInstruction = text === DEFAULT_REF_INSTRUCTION ? '' : text;
+        saveSettings();
+    });
+    document.getElementById('iig_ref_instruction_reset')?.addEventListener('click', () => {
+        settings.refInstruction = '';
+        const area = document.getElementById('iig_ref_instruction');
+        if (area) area.value = DEFAULT_REF_INSTRUCTION;
+        saveSettings();
+        toastr.info('Текст инструкции сброшен', 'Генерация картинок', { timeOut: 1500 });
     });
 
     document.getElementById('iig_external_blocks')?.addEventListener('change', (e) => {

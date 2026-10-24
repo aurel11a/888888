@@ -2505,3 +2505,15 @@
 @media (max-width: 579px) {
     #qs-panel { height: 88vh; height: 88dvh; }
 }
+
+/* ── Инструкция перед референсами ── */
+.iig-ref-instruction {
+    flex: 1 1 100%; width: 100%; box-sizing: border-box;
+    display: flex; flex-direction: column; gap: 6px;
+    margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--SmartThemeBorderColor);
+}
+.iig-ref-instruction h5 { margin: 0; font-size: 0.9em; }
+.iig-ref-instruction .hint { margin: 0; }
+.iig-ref-instruction textarea { width: 100%; box-sizing: border-box; resize: vertical; min-height: 90px; }
+.iig-ref-instruction textarea:disabled { opacity: 0.45; }
+.iig-ref-instruction .menu_button { width: max-content !important; white-space: nowrap; align-self: flex-start; }
