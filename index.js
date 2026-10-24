@@ -2110,43 +2110,26 @@ async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {
 
     const refs = getCurrentCharacterRefs();
 
-    // Char avatar (from ST avatar folder)
-    if (isNaisteraType) {
-        if (settings.naisteraSendCharAvatar) {
-            const d = await getCharacterAvatarDataUrl();
-            if (d && referenceDataUrls.length < maxRefs) { referenceDataUrls.push(d); urlLabels.push('char_face'); }
+    // Лица: сначала Юзер, потом персонаж (как в sillyimages). Фото, загруженное вручную,
+    // заменяет аватарку — раньше оно уходило вторым лицом после неё.
+    const faceSides = [
+        { label: 'user_face', manual: refs.userRef,
+          send: isNaisteraType ? settings.naisteraSendUserAvatar : settings.sendUserAvatar,
+          avatarB64: getUserAvatarBase64, avatarUrl: getUserAvatarDataUrl },
+        { label: 'char_face', manual: refs.charRef,
+          send: isNaisteraType ? settings.naisteraSendCharAvatar : settings.sendCharAvatar,
+          avatarB64: getCharacterAvatarBase64, avatarUrl: getCharacterAvatarDataUrl },
+    ];
+    for (const side of faceSides) {
+        if (isNaisteraType) {
+            if (referenceDataUrls.length >= maxRefs) break;
+            const url = (await getDataUrl(side.manual)) || (side.send ? await side.avatarUrl() : null);
+            if (url) { referenceDataUrls.push(url); urlLabels.push(side.label); }
+        } else {
+            if (referenceImages.length >= maxRefs) break;
+            const b64 = (await getB64(side.manual, side.label)) || (side.send ? await side.avatarB64() : null);
+            if (b64) { referenceImages.push(b64); refLabels.push(side.label); }
         }
-    } else {
-        if (settings.sendCharAvatar) {
-            const charAvatar = await getCharacterAvatarBase64();
-            if (charAvatar && referenceImages.length < maxRefs) { referenceImages.push(charAvatar); refLabels.push('char_face'); }
-        }
-    }
-
-    // User avatar (from ST persona)
-    if (isNaisteraType) {
-        if (settings.naisteraSendUserAvatar) {
-            const d = await getUserAvatarDataUrl();
-            if (d && referenceDataUrls.length < maxRefs) { referenceDataUrls.push(d); urlLabels.push('user_face'); }
-        }
-    } else {
-        if (settings.sendUserAvatar) {
-            const userAvatar = await getUserAvatarBase64();
-            if (userAvatar && referenceImages.length < maxRefs) { referenceImages.push(userAvatar); refLabels.push('user_face'); }
-        }
-    }
-
-    // Manual photo uploads (char/user slots) — override if uploaded
-    if (!isNaisteraType) {
-        const charB64 = await getB64(refs.charRef, 'charRef');
-        if (charB64 && referenceImages.length < maxRefs) { referenceImages.push(charB64); refLabels.push('char_face'); }
-        const userB64 = await getB64(refs.userRef, 'userRef');
-        if (userB64 && referenceImages.length < maxRefs) { referenceImages.push(userB64); refLabels.push('user_face'); }
-    } else {
-        const charUrl = await getDataUrl(refs.charRef);
-        if (charUrl && referenceDataUrls.length < maxRefs) { referenceDataUrls.push(charUrl); urlLabels.push('char_face'); }
-        const userUrl = await getDataUrl(refs.userRef);
-        if (userUrl && referenceDataUrls.length < maxRefs) { referenceDataUrls.push(userUrl); urlLabels.push('user_face'); }
     }
 
     // ── Wardrobe integration ──────────────────────────────────────
