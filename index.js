@@ -1756,6 +1756,7 @@ async function generateImageVoid(prompt, style, options = {}) {
     const settings = getSettings();
     const url = `${settings.endpoint.replace(/\/$/, '')}/v1/chat/completions`;
     const fullPrompt = style ? `[Style: ${style}] ${prompt}` : prompt;
+    rememberFinalPrompt(fullPrompt);
     const body = {
         model: settings.model,
         messages: [{ role: 'user', content: fullPrompt }],
@@ -1808,6 +1809,7 @@ async function generateImageOpenAI(prompt, style, referenceImages = [], options 
     const settings = getSettings();
     const url = `${settings.endpoint.replace(/\/$/, '')}/v1/images/generations`;
     const fullPrompt = style ? `[Style: ${style}] ${prompt}` : prompt;
+    rememberFinalPrompt(fullPrompt);
     let size = settings.size;
     if (options.aspectRatio) {
         if (options.aspectRatio === '16:9') size = '1536x1024';
@@ -1891,6 +1893,7 @@ async function generateImageGemini(prompt, style, referenceImages = [], options 
 
     let fullPrompt = style ? `[Style: ${style}] ${prompt}` : prompt;
     fullPrompt = `${refInstruction}${fullPrompt}`;
+    rememberFinalPrompt(fullPrompt);
     parts.push({ text: fullPrompt });
     const body = {
         contents: [{ role: 'user', parts }],
@@ -1927,6 +1930,7 @@ async function generateImageNaistera(prompt, style, options = {}) {
     const endpoint = settings.endpoint.replace(/\/$/, '');
     const url = endpoint.endsWith('/api/generate') ? endpoint : `${endpoint}/api/generate`;
     const fullPrompt = style ? `[Style: ${style}] ${prompt}` : prompt;
+    rememberFinalPrompt(fullPrompt);
     const aspectRatio = options.aspectRatio || settings.naisteraAspectRatio || '1:1';
     const preset = options.preset || settings.naisteraPreset || null;
     const referenceImages = options.referenceImages || [];
@@ -1972,6 +1976,77 @@ function describeGenerationError(error) {
     return raw.length > 200 ? `${raw.slice(0, 200)}…` : raw;
 }
 
+/* ── «Последний запрос»: что ушло в генерацию ── */
+
+let lastImageRequest = null;
+
+function markLastRequestOk(result) {
+    if (lastImageRequest) lastImageRequest.status = 'ok';
+    return result;
+}
+
+function rememberFinalPrompt(text) {
+    if (lastImageRequest) lastImageRequest.finalPrompt = text;
+}
+
+function describeRefLabel(label) {
+    if (label.startsWith('npc_face:')) return `Лицо НПС: ${label.slice(9)}`;
+    if (label.startsWith('npc_outfit:')) return `Наряд НПС: ${label.slice(11)}`;
+    return {
+        char_face: 'Лицо персонажа',
+        user_face: 'Лицо Юзера',
+        char_outfit: 'Одежда персонажа',
+        user_outfit: 'Одежда Юзера',
+        style: 'Стиль',
+        context: 'Прошлая картинка из чата',
+    }[label] || 'Референс';
+}
+
+function showLastImageRequest() {
+    document.querySelector('.iig-lastreq-backdrop')?.remove();
+    const req = lastImageRequest;
+    const statusText = !req ? '' : {
+        ok: '✅ Картинка получена',
+        pending: '⏳ Ещё генерируется',
+        stopped: '⏹ Остановлено',
+        error: `❌ Ошибка: ${req.error}`,
+    }[req.status] || '';
+    const refsHtml = !req ? '' : req.refs.length
+        ? `<div class="iig-lastreq-refs">${req.refs.map((r, i) => `
+            <figure>
+                <img src="${sanitizeForHtml(r.src)}" alt="">
+                <figcaption><b>${i + 1}.</b> ${sanitizeForHtml(describeRefLabel(r.label))}<small>${Math.round(r.src.length * 0.75 / 1024)} КБ</small></figcaption>
+            </figure>`).join('')}</div>`
+        : '<p class="iig-lastreq-muted">Картинки-референсы не отправлялись.</p>';
+    const backdrop = document.createElement('div');
+    backdrop.className = 'iig-lastreq-backdrop';
+    backdrop.innerHTML = `<div class="iig-lastreq">
+        <div class="iig-lastreq-head">
+            <b><i class="fa-solid fa-magnifying-glass"></i> Последний запрос</b>
+            <button class="menu_button iig-lastreq-close" title="Закрыть"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        ${!req ? '<p class="iig-lastreq-muted">Пока ничего не генерировалось. Сгенерируй картинку и открой снова.</p>' : `
+        <div class="iig-lastreq-meta">
+            <span>${new Date(req.at).toLocaleTimeString()}</span>
+            <span>${sanitizeForHtml(req.apiType)}${req.model ? ' · ' + sanitizeForHtml(req.model) : ''}</span>
+            <span>референсов: ${req.refs.length}${req.apiType === 'gemini' || req.apiType === 'naistera' ? ` из ${req.maxRefs} возможных` : ''}</span>
+        </div>
+        <div class="iig-lastreq-status">${sanitizeForHtml(statusText)}</div>
+        <h4>Картинки по порядку</h4>
+        ${req.refsNote ? `<p class="iig-lastreq-note">${sanitizeForHtml(req.refsNote)}</p>` : ''}
+        ${refsHtml}
+        <h4>Текст запроса</h4>
+        <pre>${sanitizeForHtml(req.finalPrompt || req.prompt)}</pre>`}
+    </div>`;
+    document.documentElement.appendChild(backdrop);
+    const close = () => { backdrop.remove(); document.removeEventListener('keydown', onKey); };
+    const onKey = (e) => { if (e.key === 'Escape') close(); };
+    document.addEventListener('keydown', onKey);
+    backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
+    backdrop.querySelector('.iig-lastreq-close').addEventListener('click', close);
+}
+window._iigShowLastRequest = showLastImageRequest;
+
 function validateSettings() {
     const settings = getSettings();
     const errors = [];
@@ -1997,6 +2072,7 @@ async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {
     const referenceImages = [];   // base64 — for Gemini / OpenAI
     const referenceDataUrls = []; // data URLs — for Naistera
     const refLabels = [];         // parallel labels for Gemini label system
+    const urlLabels = [];         // те же подписи для Naistera — для окна «Последний запрос»
     const maxRefs = getMaxReferenceImages(settings);
     const activeStyle = getActiveStyle(settings);
     style = resolveEffectiveStyle(style, settings);
@@ -2020,7 +2096,7 @@ async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {
     if (isNaisteraType) {
         if (settings.naisteraSendCharAvatar) {
             const d = await getCharacterAvatarDataUrl();
-            if (d && referenceDataUrls.length < maxRefs) referenceDataUrls.push(d);
+            if (d && referenceDataUrls.length < maxRefs) { referenceDataUrls.push(d); urlLabels.push('char_face'); }
         }
     } else {
         if (settings.sendCharAvatar) {
@@ -2033,7 +2109,7 @@ async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {
     if (isNaisteraType) {
         if (settings.naisteraSendUserAvatar) {
             const d = await getUserAvatarDataUrl();
-            if (d && referenceDataUrls.length < maxRefs) referenceDataUrls.push(d);
+            if (d && referenceDataUrls.length < maxRefs) { referenceDataUrls.push(d); urlLabels.push('user_face'); }
         }
     } else {
         if (settings.sendUserAvatar) {
@@ -2050,9 +2126,9 @@ async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {
         if (userB64 && referenceImages.length < maxRefs) { referenceImages.push(userB64); refLabels.push('user_face'); }
     } else {
         const charUrl = await getDataUrl(refs.charRef);
-        if (charUrl && referenceDataUrls.length < maxRefs) referenceDataUrls.push(charUrl);
+        if (charUrl && referenceDataUrls.length < maxRefs) { referenceDataUrls.push(charUrl); urlLabels.push('char_face'); }
         const userUrl = await getDataUrl(refs.userRef);
-        if (userUrl && referenceDataUrls.length < maxRefs) referenceDataUrls.push(userUrl);
+        if (userUrl && referenceDataUrls.length < maxRefs) { referenceDataUrls.push(userUrl); urlLabels.push('user_face'); }
     }
 
     // ── Wardrobe integration ──────────────────────────────────────
@@ -2069,11 +2145,11 @@ async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {
         } else if (isNaisteraType) {
             const botUrl = window.sillyWardrobe.getActiveOutfitDataUrl('bot');
             const userUrl = window.sillyWardrobe.getActiveOutfitDataUrl('user');
-            if (botUrl && referenceDataUrls.length < maxRefs) { referenceDataUrls.push(botUrl); wardrobeAdded++; }
-            if (userUrl && referenceDataUrls.length < maxRefs) { referenceDataUrls.push(userUrl); wardrobeAdded++; }
+            if (botUrl && referenceDataUrls.length < maxRefs) { referenceDataUrls.push(botUrl); urlLabels.push('char_outfit'); wardrobeAdded++; }
+            if (userUrl && referenceDataUrls.length < maxRefs) { referenceDataUrls.push(userUrl); urlLabels.push('user_outfit'); wardrobeAdded++; }
         } else {
-            if (botB64 && referenceImages.length < maxRefs) { referenceImages.push(botB64); wardrobeAdded++; }
-            if (userB64 && referenceImages.length < maxRefs) { referenceImages.push(userB64); wardrobeAdded++; }
+            if (botB64 && referenceImages.length < maxRefs) { referenceImages.push(botB64); refLabels.push('char_outfit'); wardrobeAdded++; }
+            if (userB64 && referenceImages.length < maxRefs) { referenceImages.push(userB64); refLabels.push('user_outfit'); wardrobeAdded++; }
         }
         if (wardrobeAdded > 0) iigLog('INFO', `Wardrobe: добавлено ${wardrobeAdded} аутфита(ов)`);
 
@@ -2094,7 +2170,7 @@ async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {
             referenceImages.push(styleB64); refLabels.push('style');
             iigLog('INFO', `Style image: "${activeStyle.name}"`);
         } else if (styleB64 && isNaisteraType && referenceDataUrls.length < maxRefs) {
-            referenceDataUrls.push('data:image/jpeg;base64,' + styleB64);
+            referenceDataUrls.push('data:image/jpeg;base64,' + styleB64); urlLabels.push('style');
             iigLog('INFO', `Style image (naistera): "${activeStyle.name}"`);
         }
     }
@@ -2110,7 +2186,7 @@ async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {
         } else if (isNaisteraType) {
             const contextRefs = await collectPreviousContextReferences(options.messageId, 'dataUrl', contextCount);
             for (const ref of contextRefs) {
-                if (referenceDataUrls.length < maxRefs) { referenceDataUrls.push(ref); iigLog('INFO', `Image context ref added (naistera)`); }
+                if (referenceDataUrls.length < maxRefs) { referenceDataUrls.push(ref); urlLabels.push('context'); iigLog('INFO', `Image context ref added (naistera)`); }
             }
         }
     }
@@ -2123,7 +2199,7 @@ async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {
         if (refCount() < maxRefs && (npc.imagePath || npc.imageBase64)) {
             if (isNaisteraType) {
                 const url = await getDataUrl(npc);
-                if (url) { referenceDataUrls.push(url); iigLog('INFO', `NPC (naistera): ${npc.name}`); }
+                if (url) { referenceDataUrls.push(url); urlLabels.push(`npc_face:${npc.name}`); iigLog('INFO', `NPC (naistera): ${npc.name}`); }
             } else {
                 const b64 = npc.imagePath ? await loadRefImageAsBase64(npc.imagePath) : npc.imageBase64;
                 if (b64) { referenceImages.push(b64); refLabels.push(`npc_face:${npc.name}`); iigLog('INFO', `NPC: ${npc.name}`); }
@@ -2132,7 +2208,7 @@ async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {
         if (refCount() < maxRefs && npc.outfit?.imagePath && (isGeminiType || isNaisteraType)) {
             const b64 = await loadRefImageAsBase64(npc.outfit.imagePath);
             if (b64 && isNaisteraType) {
-                referenceDataUrls.push('data:image/jpeg;base64,' + b64);
+                referenceDataUrls.push('data:image/jpeg;base64,' + b64); urlLabels.push(`npc_outfit:${npc.name}`);
             } else if (b64) {
                 referenceImages.push(b64); refLabels.push(`npc_outfit:${npc.name}`);
             }
@@ -2144,14 +2220,32 @@ async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {
 
     iigLog('INFO', `Refs: ${referenceImages.length} base64, ${referenceDataUrls.length} dataUrls, labels=[${refLabels.join(',')}], apiType=${settings.apiType}, limit=${maxRefs}`);
 
+    // Что реально уходит провайдеру — для окна «Последний запрос».
+    let sentRefs = [];
+    let refsNote = '';
+    if (isNaisteraType) {
+        sentRefs = referenceDataUrls.slice(0, 4).map((src, i) => ({ label: urlLabels[i] || 'reference', src }));
+    } else if (isGeminiType) {
+        sentRefs = referenceImages.slice(0, maxRefs).map((b64, i) => ({ label: refLabels[i] || 'reference', src: 'data:image/jpeg;base64,' + b64 }));
+    } else if (settings.apiType === 'void') {
+        refsNote = 'VoidAI не принимает картинки-референсы: ушёл только текст.';
+    } else if (referenceImages.length) {
+        sentRefs = referenceImages.slice(0, 1).map((b64, i) => ({ label: refLabels[i] || 'reference', src: 'data:image/jpeg;base64,' + b64 }));
+        refsNote = 'OpenAI-режим: отправляется только первая картинка, и обычный запрос генерации её, скорее всего, не учитывает.';
+    }
+    lastImageRequest = {
+        at: Date.now(), apiType: settings.apiType, model: settings.model || '', maxRefs,
+        refs: sentRefs, refsNote, prompt, style: style || '', finalPrompt: '', status: 'pending', error: '',
+    };
+
     let lastError;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
             onStatusUpdate?.(`Генерация${attempt > 0 ? ` (повтор ${attempt}/${maxRetries})` : ''}...`);
-            if (settings.apiType === 'void') return await generateImageVoid(prompt, style, options);
-            if (isNaisteraType) return await generateImageNaistera(prompt, style, { ...options, referenceImages: referenceDataUrls });
-            if (isGeminiType) return await generateImageGemini(prompt, style, referenceImages, { ...options, refLabels });
-            return await generateImageOpenAI(prompt, style, referenceImages, options);
+            if (settings.apiType === 'void') return markLastRequestOk(await generateImageVoid(prompt, style, options));
+            if (isNaisteraType) return markLastRequestOk(await generateImageNaistera(prompt, style, { ...options, referenceImages: referenceDataUrls }));
+            if (isGeminiType) return markLastRequestOk(await generateImageGemini(prompt, style, referenceImages, { ...options, refLabels }));
+            return markLastRequestOk(await generateImageOpenAI(prompt, style, referenceImages, options));
         } catch (error) {
             lastError = error;
             if (error.isStopped) break;
@@ -2165,6 +2259,10 @@ async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {
             });
             if (options.signal?.aborted) { lastError = createStopError(); break; }
         }
+    }
+    if (lastImageRequest) {
+        lastImageRequest.status = lastError?.isStopped ? 'stopped' : 'error';
+        lastImageRequest.error = describeGenerationError(lastError);
     }
     throw lastError;
 }
@@ -3321,6 +3419,9 @@ function createSettingsUI() {
                     <!-- Debug -->
                     <div class="iig-section">
                         <h4><i class="fa-solid fa-bug"></i> Отладка</h4>
+                        <div id="iig_show_last_request" class="menu_button iig-export-logs-btn">
+                            <i class="fa-solid fa-magnifying-glass"></i> Последний запрос
+                        </div>
                         <div id="iig_export_logs" class="menu_button iig-export-logs-btn">
                             <i class="fa-solid fa-download"></i> Экспорт логов
                         </div>
@@ -3851,6 +3952,7 @@ function bindSettingsEvents() {
         saveSettings();
     });
     document.getElementById('iig_export_logs')?.addEventListener('click', () => exportLogs());
+    document.getElementById('iig_show_last_request')?.addEventListener('click', () => showLastImageRequest());
 
     document.getElementById('iig_image_context_enabled')?.addEventListener('change', (e) => {
         settings.imageContextEnabled = e.target.checked;

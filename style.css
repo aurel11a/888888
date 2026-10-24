@@ -2413,3 +2413,38 @@
 .vw-npc-outfit img { width: 22px; height: 28px; object-fit: cover; border-radius: 4px; }
 .vw-npc-outfit span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vw-npc-outfit .vw-ic-btn { width: 22px; height: 22px; }
+
+/* ── «Последний запрос» ── */
+.iig-lastreq-backdrop {
+    /* Размеры явно: у <html> в некоторых темах есть transform. */
+    position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; height: 100dvh; z-index: 100002;
+    display: flex; align-items: center; justify-content: center; padding: 12px; box-sizing: border-box;
+    background: rgba(0,0,0,0.55);
+    font-family: var(--mainFontFamily, sans-serif); color: var(--SmartThemeBodyColor);
+}
+.iig-lastreq {
+    width: min(720px, 100%); max-height: 100%; overflow-y: auto; box-sizing: border-box;
+    padding: 14px 16px 18px; border-radius: 14px;
+    background: var(--SmartThemeBlurTintColor, #1d1d24); border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+}
+.iig-lastreq-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 1.05em; }
+.iig-lastreq-head .menu_button { margin: 0; padding: 4px 10px; }
+.iig-lastreq h4 { margin: 14px 0 6px; font-size: 0.9em; opacity: 0.75; }
+.iig-lastreq-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; font-size: 0.85em; opacity: 0.7; }
+.iig-lastreq-status { margin-top: 6px; font-size: 0.9em; }
+.iig-lastreq-muted { opacity: 0.6; font-size: 0.9em; }
+.iig-lastreq-note { font-size: 0.85em; padding: 6px 10px; border-radius: 8px; background: rgba(255,180,80,0.12); border: 1px solid rgba(255,180,80,0.3); }
+.iig-lastreq-refs { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 10px; }
+.iig-lastreq-refs figure { margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.iig-lastreq-refs img {
+    width: 100%; aspect-ratio: 3/4; object-fit: cover; border-radius: 8px;
+    border: 1px solid var(--SmartThemeBorderColor); background: rgba(0,0,0,0.2);
+}
+.iig-lastreq-refs figcaption { font-size: 0.8em; line-height: 1.3; display: flex; flex-direction: column; }
+.iig-lastreq-refs figcaption small { opacity: 0.55; }
+.iig-lastreq pre {
+    white-space: pre-wrap; word-break: break-word; margin: 0; padding: 10px; border-radius: 8px;
+    font-size: 0.82em; max-height: 40vh; overflow-y: auto;
+    background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.06);
+}
