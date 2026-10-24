@@ -1061,20 +1061,33 @@ const LEGACY_MODULE_NAME = 'inline_image_gen';
 const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const FETCH_TIMEOUT = IS_IOS ? 180000 : 300000;
 
+// Ошибка «пользователь нажал Стоп»: её не повторяем и не считаем ошибкой генерации.
+function createStopError() {
+    const error = new Error('Генерация остановлена');
+    error.isStopped = true;
+    return error;
+}
+
 function robustFetch(url, options = {}) {
+    const { signal: stopSignal, ...fetchOptions } = options;
+    if (stopSignal?.aborted) return Promise.reject(createStopError());
     if (!IS_IOS) {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
-        return fetch(url, { ...options, signal: controller.signal })
+        stopSignal?.addEventListener('abort', () => controller.abort(), { once: true });
+        return fetch(url, { ...fetchOptions, signal: controller.signal })
             .then(r => { clearTimeout(timeoutId); return r; })
             .catch(e => {
                 clearTimeout(timeoutId);
+                if (stopSignal?.aborted) throw createStopError();
                 if (e.name === 'AbortError') throw new Error('Request timed out after 5 minutes');
                 throw e;
             });
     }
+    options = fetchOptions;
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
+        stopSignal?.addEventListener('abort', () => xhr.abort(), { once: true });
         xhr.open(options.method || 'GET', url);
         xhr.timeout = FETCH_TIMEOUT;
         xhr.responseType = 'text';
@@ -1090,7 +1103,7 @@ function robustFetch(url, options = {}) {
         });
         xhr.ontimeout = () => reject(new Error('Request timed out after 3 minutes (iOS)'));
         xhr.onerror = () => reject(new Error('Network error (iOS)'));
-        xhr.onabort = () => reject(new Error('Request aborted (iOS)'));
+        xhr.onabort = () => reject(stopSignal?.aborted ? createStopError() : new Error('Request aborted (iOS)'));
         xhr.send(options.body || null);
     });
 }
@@ -1599,6 +1612,7 @@ async function generateImageVoid(prompt, style, options = {}) {
     };
     const response = await robustFetch(url, {
         method: 'POST',
+        signal: options.signal,
         headers: { 'Authorization': `Bearer ${settings.apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
     });
@@ -1654,6 +1668,7 @@ async function generateImageOpenAI(prompt, style, referenceImages = [], options 
     if (referenceImages.length > 0) body.image = `data:image/png;base64,${referenceImages[0]}`;
     const response = await robustFetch(url, {
         method: 'POST',
+        signal: options.signal,
         headers: { 'Authorization': `Bearer ${settings.apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
     });
@@ -1730,19 +1745,24 @@ async function generateImageGemini(prompt, style, referenceImages = [], options 
     };
     const response = await robustFetch(url, {
         method: 'POST',
+        signal: options.signal,
         headers: { 'Authorization': `Bearer ${settings.apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
     });
     if (!response.ok) { const text = await response.text(); throw new Error(`API Error (${response.status}): ${text}`); }
     const result = await response.json();
     const candidates = result.candidates || [];
-    if (candidates.length === 0) throw new Error('No candidates in response');
+    if (candidates.length === 0) {
+        const blockReason = result.promptFeedback?.blockReason;
+        throw new Error(`No candidates in response${blockReason ? ` (blockReason: ${blockReason})` : ''}`);
+    }
     const responseParts = candidates[0].content?.parts || [];
     for (const part of responseParts) {
         if (part.inlineData) return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
         if (part.inline_data) return `data:${part.inline_data.mime_type};base64,${part.inline_data.data}`;
     }
-    throw new Error('No image found in Gemini response');
+    const finishReason = candidates[0].finishReason;
+    throw new Error(`No image found in Gemini response${finishReason && finishReason !== 'STOP' ? ` (${finishReason})` : ''}`);
 }
 
 /* ── API: Naistera ── */
@@ -1759,6 +1779,7 @@ async function generateImageNaistera(prompt, style, options = {}) {
     if (referenceImages.length > 0) body.reference_images = referenceImages.slice(0, 4);
     const response = await robustFetch(url, {
         method: 'POST',
+        signal: options.signal,
         headers: { 'Authorization': `Bearer ${settings.apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
     });
@@ -1766,6 +1787,33 @@ async function generateImageNaistera(prompt, style, options = {}) {
     const result = await response.json();
     if (!result?.data_url) throw new Error('No data_url in response');
     return result.data_url;
+}
+
+// Понятный текст ошибки для тоста и подсказки на картинке ошибки.
+// Сырой текст остаётся в логах.
+function describeGenerationError(error) {
+    if (error?.isStopped) return 'Генерация остановлена';
+    const raw = String(error?.message || error || '');
+    const msg = raw.toLowerCase();
+    const status = Number((raw.match(/API Error \((\d{3})\)/) || [])[1] || 0);
+    const has = (...list) => list.some(x => msg.includes(x));
+    if (has('image_safety', 'prohibited_content', 'safety', 'content policy', 'content_policy', 'moderation', 'blockreason'))
+        return 'Цензура: модель отказалась рисовать этот запрос. Попробуй переформулировать промпт.';
+    if (status === 402 || has('insufficient_quota', 'billing', 'quota', 'insufficient balance', 'credits'))
+        return 'Закончились деньги или квота на API. Проверь баланс у провайдера.';
+    if (status === 429 || has('rate limit', 'too many requests', 'resource_exhausted'))
+        return 'Лимит запросов у провайдера. Подожди немного и повтори.';
+    if (status === 401 || status === 403 || has('invalid api key', 'api key not valid', 'unauthorized', 'permission'))
+        return 'Неверный API ключ или нет доступа к модели.';
+    if ((status === 404 && has('model')) || has('model not found', 'does not exist', 'unsupported model'))
+        return 'Модель не найдена: проверь её название в настройках.';
+    if (has('timed out', 'timeout'))
+        return 'Таймаут: API не ответил вовремя.';
+    if (has('network error', 'failed to fetch', 'networkerror'))
+        return 'Нет связи с API: проверь эндпоинт и интернет.';
+    if (status >= 500)
+        return `Сервер API не отвечает (${status}). Попробуй позже.`;
+    return raw.length > 200 ? `${raw.slice(0, 200)}…` : raw;
 }
 
 function validateSettings() {
@@ -1939,11 +1987,16 @@ async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {
             return await generateImageOpenAI(prompt, style, referenceImages, options);
         } catch (error) {
             lastError = error;
+            if (error.isStopped) break;
             const isRetryable = ['429','503','502','504','timeout','network'].some(s => error.message?.includes(s));
             if (!isRetryable || attempt === maxRetries) break;
             const delay = baseDelay * Math.pow(2, attempt);
             onStatusUpdate?.(`Повтор через ${delay / 1000}с...`);
-            await new Promise(resolve => setTimeout(resolve, delay));
+            await new Promise(resolve => {
+                const timer = setTimeout(resolve, delay);
+                options.signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
+            });
+            if (options.signal?.aborted) { lastError = createStopError(); break; }
         }
     }
     throw lastError;
@@ -2107,7 +2160,15 @@ function createLoadingPlaceholder(tagId) {
         <div class="iig-spinner-wrap"><div class="iig-spinner"></div></div>
         <div class="iig-status">Генерация картинки...</div>
         <div class="iig-timer"></div>
+        <div class="menu_button iig-stop-btn" title="Остановить генерацию"><i class="fa-solid fa-stop"></i> Стоп</div>
     `;
+    placeholder._abortController = new AbortController();
+    placeholder.querySelector('.iig-stop-btn').addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        placeholder._abortController.abort();
+        placeholder.querySelector('.iig-status').textContent = 'Останавливаю...';
+    });
     const timerEl = placeholder.querySelector('.iig-timer');
     const startTime = Date.now();
     const tSec = FETCH_TIMEOUT / 1000;
@@ -2125,7 +2186,8 @@ function createErrorPlaceholder(tagId, errorMessage, tagInfo, messageId, tagInde
     img.className = 'iig-error-image';
     img.src = ERROR_IMAGE_PATH;
     img.alt = 'Ошибка генерации';
-    img.title = `Ошибка: ${errorMessage}`;
+    const friendly = describeGenerationError({ message: errorMessage });
+    img.title = friendly === errorMessage ? `Ошибка: ${errorMessage}` : `${friendly}\n\n${errorMessage}`;
     img.dataset.tagId = tagId;
     if (tagInfo.fullMatch) {
         const m = tagInfo.fullMatch.match(/data-iig-instruction\s*=\s*(?:(['"])([\s\S]*?)\1)/i)
@@ -2227,7 +2289,7 @@ async function processMessageTags(messageId) {
             const dataUrl = await generateImageWithRetry(
                 tag.prompt, tag.style,
                 (status) => { statusEl.textContent = status; },
-                { aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality, preset: tag.preset, messageId }
+                { aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality, preset: tag.preset, messageId, signal: loadingPlaceholder._abortController.signal }
             );
             statusEl.textContent = 'Сохранение...';
             const imagePath = await saveImageToFile(dataUrl);
@@ -2260,9 +2322,13 @@ async function processMessageTags(messageId) {
             } else {
                 replaceTagInMessageSource(message, tag, `[IMG:ERROR:${error.message.substring(0, 50)}]`);
             }
-            sessionErrorCount++;
-            updateSessionStats();
-            toastr.error(`Ошибка: ${error.message}`, 'Генерация картинок');
+            if (error.isStopped) {
+                toastr.info('Генерация остановлена', 'Генерация картинок', { timeOut: 2000 });
+            } else {
+                sessionErrorCount++;
+                updateSessionStats();
+                toastr.error(describeGenerationError(error), 'Генерация картинок');
+            }
         }
     };
 
@@ -2295,6 +2361,7 @@ async function regenerateMessageImages(messageId) {
     for (let index = 0; index < tags.length; index++) {
         const tag = tags[index];
         const tagId = `iig-regen-${messageId}-${index}`;
+        let activePlaceholder = null;
         try {
             // Prefer data-iig-instruction, but fall back to any generated image
             // (ST's messageFormatting can strip custom data-* attrs on re-render)
@@ -2310,12 +2377,13 @@ async function regenerateMessageImages(messageId) {
             if (existingImg) {
                 const instruction = existingImg.getAttribute('data-iig-instruction');
                 const loadingPlaceholder = createLoadingPlaceholder(tagId);
+                activePlaceholder = loadingPlaceholder;
                 existingImg.replaceWith(loadingPlaceholder);
                 const statusEl = loadingPlaceholder.querySelector('.iig-status');
                 const dataUrl = await generateImageWithRetry(
                     tag.prompt, tag.style,
                     (status) => { statusEl.textContent = status; },
-                    { aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality, preset: tag.preset, messageId }
+                    { aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality, preset: tag.preset, messageId, signal: loadingPlaceholder._abortController.signal }
                 );
                 statusEl.textContent = 'Сохранение...';
                 const imagePath = await saveImageToFile(dataUrl);
@@ -2331,7 +2399,12 @@ async function regenerateMessageImages(messageId) {
             }
         } catch (error) {
             iigLog('ERROR', `Regen failed tag ${index}:`, error.message);
-            toastr.error(`Ошибка: ${error.message}`, 'Генерация картинок');
+            if (activePlaceholder?.isConnected) {
+                if (activePlaceholder._timerInterval) clearInterval(activePlaceholder._timerInterval);
+                activePlaceholder.replaceWith(createErrorPlaceholder(tagId, error.message, tag, messageId, index));
+            }
+            if (error.isStopped) toastr.info('Генерация остановлена', 'Генерация картинок', { timeOut: 2000 });
+            else toastr.error(describeGenerationError(error), 'Генерация картинок');
         }
     }
     processingMessages.delete(messageId);
@@ -2423,7 +2496,7 @@ async function regenerateSingleImage(messageId, tagIndex) {
         const dataUrl = await generateImageWithRetry(
             tag.prompt, tag.style,
             (s) => { if (statusEl) statusEl.textContent = s; },
-            { aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality, preset: tag.preset, messageId }
+            { aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality, preset: tag.preset, messageId, signal: lp._abortController.signal }
         );
         if (statusEl) statusEl.textContent = 'Сохранение...';
         const imagePath = await saveImageToFile(dataUrl);
@@ -2445,7 +2518,8 @@ async function regenerateSingleImage(messageId, tagIndex) {
         iigLog('ERROR', `Single regen failed: ${err.message}`);
         if (lp._timerInterval) clearInterval(lp._timerInterval);
         lp.replaceWith(createErrorPlaceholder(tagId, err.message, tag, messageId, tagIndex));
-        toastr.error(`Ошибка: ${err.message}`, '');
+        if (err.isStopped) toastr.info('Генерация остановлена', '', { timeOut: 2000 });
+        else toastr.error(describeGenerationError(err), '');
     }
 
 }

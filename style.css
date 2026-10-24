@@ -2087,3 +2087,9 @@
 }
 .iig-style-image-empty { display: flex; align-items: center; justify-content: center; opacity: 0.45; }
 .iig-style-image-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* ── Кнопка «Стоп» на плейсхолдере генерации ── */
+.iig-loading-placeholder .iig-stop-btn {
+    margin-top: 8px; padding: 3px 12px; font-size: 0.85em;
+    display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+}
