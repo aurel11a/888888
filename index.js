@@ -1202,7 +1202,10 @@ function getPreviousGeneratedImageUrls(messageId, requestedCount) {
     for (let idx = messageId - 1; idx >= 0 && urls.length < count; idx--) {
         const message = chat[idx];
         if (!message || message.is_user || message.is_system) continue;
-        for (const url of extractGeneratedImageUrlsFromText(message.mes || '')) {
+        const sourceText = getSettings().externalBlocks
+            ? `${message.mes || ''}\n${message.extra?.extblocks || ''}`
+            : (message.mes || '');
+        for (const url of extractGeneratedImageUrlsFromText(sourceText)) {
             if (seen.has(url)) continue;
             seen.add(url); urls.push(url);
             if (urls.length >= count) break;
@@ -2052,6 +2055,43 @@ async function parseImageTags(text, options = {}) {
     return tags;
 }
 
+/* ── Внешние блоки (message.extra.extblocks) ── */
+
+// Текст, который ST реально рендерит в .mes_text: с внешними блоками это
+// message.extra.display_text (основной текст + блоки трекеров).
+function getMessageRenderText(message, settings = getSettings()) {
+    if (!message) return '';
+    if (settings.externalBlocks && message.extra?.display_text) return message.extra.display_text;
+    return message.mes || '';
+}
+
+// Теги из основного текста и (если включено) из внешних блоков. sourceKey
+// говорит, где тег лежит, чтобы заменить его в правильном поле.
+async function parseMessageImageTags(message, options = {}) {
+    const settings = getSettings();
+    const tags = (await parseImageTags(message?.mes || '', options)).map(tag => ({ ...tag, sourceKey: 'mes' }));
+    if (settings.externalBlocks && message?.extra?.extblocks) {
+        const extTags = await parseImageTags(message.extra.extblocks, options);
+        tags.push(...extTags.map(tag => ({ ...tag, sourceKey: 'extblocks' })));
+    }
+    return tags;
+}
+
+function replaceTagInMessageSource(message, tag, replacement) {
+    if (!message || !tag) return;
+    if (tag.sourceKey === 'extblocks') {
+        if (!message.extra) message.extra = {};
+        message.extra.extblocks = (message.extra.extblocks || '').replace(tag.fullMatch, replacement);
+        const swipe = message.swipe_info?.[message.swipe_id];
+        if (swipe?.extra?.extblocks) swipe.extra.extblocks = swipe.extra.extblocks.replace(tag.fullMatch, replacement);
+    } else {
+        message.mes = (message.mes || '').replace(tag.fullMatch, replacement);
+    }
+    if (message.extra?.display_text) {
+        message.extra.display_text = message.extra.display_text.replace(tag.fullMatch, replacement);
+    }
+}
+
 function getErrorImagePath() {
     // Путь от самого модуля — не зависит от имени папки расширения.
     return new URL('./error.svg', import.meta.url).pathname;
@@ -2120,7 +2160,7 @@ async function processMessageTags(messageId) {
     if (processingMessages.has(messageId)) return;
     const message = context.chat[messageId];
     if (!message || message.is_user) return;
-    const tags = await parseImageTags(message.mes, { checkExistence: true });
+    const tags = await parseMessageImageTags(message, { checkExistence: true });
     if (tags.length === 0) return;
     processingMessages.add(messageId);
     toastr.info(`Найдено тегов: ${tags.length}. Генерация...`, 'Генерация картинок', { timeOut: 3000 });
@@ -2187,7 +2227,7 @@ async function processMessageTags(messageId) {
             const dataUrl = await generateImageWithRetry(
                 tag.prompt, tag.style,
                 (status) => { statusEl.textContent = status; },
-                { aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality, preset: tag.preset }
+                { aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality, preset: tag.preset, messageId }
             );
             statusEl.textContent = 'Сохранение...';
             const imagePath = await saveImageToFile(dataUrl);
@@ -2203,9 +2243,9 @@ async function processMessageTags(messageId) {
             if (loadingPlaceholder._timerInterval) clearInterval(loadingPlaceholder._timerInterval);
             loadingPlaceholder.replaceWith(img); // observer will auto-wrap
             if (tag.isNewFormat) {
-                message.mes = message.mes.replace(tag.fullMatch, tag.fullMatch.replace(/src\s*=\s*(['"])[^'"]*\1/i, `src="${imagePath}"`));
+                replaceTagInMessageSource(message, tag, tag.fullMatch.replace(/src\s*=\s*(['"])[^'"]*\1/i, `src="${imagePath}"`));
             } else {
-                message.mes = message.mes.replace(tag.fullMatch, `[IMG:✓:${imagePath}]`);
+                replaceTagInMessageSource(message, tag, `[IMG:✓:${imagePath}]`);
             }
             sessionGenCount++;
             updateSessionStats();
@@ -2216,9 +2256,9 @@ async function processMessageTags(messageId) {
             if (loadingPlaceholder._timerInterval) clearInterval(loadingPlaceholder._timerInterval);
             loadingPlaceholder.replaceWith(errorPlaceholder);
             if (tag.isNewFormat) {
-                message.mes = message.mes.replace(tag.fullMatch, tag.fullMatch.replace(/src\s*=\s*(['"])[^'"]*\1/i, `src="${ERROR_IMAGE_PATH}"`));
+                replaceTagInMessageSource(message, tag, tag.fullMatch.replace(/src\s*=\s*(['"])[^'"]*\1/i, `src="${ERROR_IMAGE_PATH}"`));
             } else {
-                message.mes = message.mes.replace(tag.fullMatch, `[IMG:ERROR:${error.message.substring(0, 50)}]`);
+                replaceTagInMessageSource(message, tag, `[IMG:ERROR:${error.message.substring(0, 50)}]`);
             }
             sessionErrorCount++;
             updateSessionStats();
@@ -2233,7 +2273,7 @@ async function processMessageTags(messageId) {
     }
     await context.saveChat();
     if (typeof context.messageFormatting === 'function') {
-        const formatted = context.messageFormatting(message.mes, message.name, message.is_system, message.is_user, messageId);
+        const formatted = context.messageFormatting(getMessageRenderText(message), message.name, message.is_system, message.is_user, messageId);
         mesTextEl.innerHTML = formatted;
     }
     // Observer picks up new images automatically — no manual wrapping needed
@@ -2243,7 +2283,7 @@ async function regenerateMessageImages(messageId) {
     const context = SillyTavern.getContext();
     const message = context.chat[messageId];
     if (!message) { toastr.error('Сообщение не найдено', 'Генерация картинок'); return; }
-    const tags = await parseImageTags(message.mes, { forceAll: true });
+    const tags = await parseMessageImageTags(message, { forceAll: true });
     if (tags.length === 0) { toastr.warning('Нет тегов для перегенерации', 'Генерация картинок'); return; }
     toastr.info(`Перегенерация ${tags.length} картинок...`, 'Генерация картинок');
     processingMessages.add(messageId);
@@ -2275,7 +2315,7 @@ async function regenerateMessageImages(messageId) {
                 const dataUrl = await generateImageWithRetry(
                     tag.prompt, tag.style,
                     (status) => { statusEl.textContent = status; },
-                    { aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality, preset: tag.preset }
+                    { aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality, preset: tag.preset, messageId }
                 );
                 statusEl.textContent = 'Сохранение...';
                 const imagePath = await saveImageToFile(dataUrl);
@@ -2286,7 +2326,7 @@ async function regenerateMessageImages(messageId) {
                 if (instruction) img.setAttribute('data-iig-instruction', instruction);
                 if (loadingPlaceholder._timerInterval) clearInterval(loadingPlaceholder._timerInterval);
                 loadingPlaceholder.replaceWith(img); // observer will auto-wrap
-                message.mes = message.mes.replace(tag.fullMatch, tag.fullMatch.replace(/src\s*=\s*(['"])[^'"]*\1/i, `src="${imagePath}"`));
+                replaceTagInMessageSource(message, tag, tag.fullMatch.replace(/src\s*=\s*(['"])[^'"]*\1/i, `src="${imagePath}"`));
                 toastr.success(`Картинка ${index + 1}/${tags.length} готова`, 'Генерация картинок', { timeOut: 2000 });
             }
         } catch (error) {
@@ -2347,7 +2387,7 @@ async function regenerateSingleImage(messageId, tagIndex) {
     const message = context.chat[messageId];
     if (!message) { toastr.error('Сообщение не найдено', ''); return; }
 
-    const tags = await parseImageTags(message.mes, { forceAll: true });
+    const tags = await parseMessageImageTags(message, { forceAll: true });
     if (tags.length === 0) { toastr.error('Тег картинки не найден в сообщении', ''); return; }
     // Индекс мог «съехать» (нестандартные картинки в сообщении) — не падаем, а берём ближайший.
     let realIndex = tagIndex;
@@ -2383,7 +2423,7 @@ async function regenerateSingleImage(messageId, tagIndex) {
         const dataUrl = await generateImageWithRetry(
             tag.prompt, tag.style,
             (s) => { if (statusEl) statusEl.textContent = s; },
-            { aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality, preset: tag.preset }
+            { aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality, preset: tag.preset, messageId }
         );
         if (statusEl) statusEl.textContent = 'Сохранение...';
         const imagePath = await saveImageToFile(dataUrl);
@@ -2398,7 +2438,7 @@ async function regenerateSingleImage(messageId, tagIndex) {
         if (lp._timerInterval) clearInterval(lp._timerInterval);
         lp.replaceWith(img); // observer will auto-wrap
 
-        message.mes = message.mes.replace(tag.fullMatch, tag.fullMatch.replace(/src\s*=\s*(['"])[^'"]*\1/i, `src="${imagePath}"`));
+        replaceTagInMessageSource(message, tag, tag.fullMatch.replace(/src\s*=\s*(['"])[^'"]*\1/i, `src="${imagePath}"`));
         await context.saveChat();
         toastr.success('Картинка перегенерирована', '', { timeOut: 2000 });
     } catch (err) {
@@ -2707,6 +2747,10 @@ function createSettingsUI() {
                     <label class="checkbox_label" style="margin-top:4px;">
                         <input type="checkbox" id="iig_enabled" ${settings.enabled ? 'checked' : ''}>
                         <span>Включить генерацию картинок</span>
+                    </label>
+                    <label class="checkbox_label" title="Искать теги картинок и во внешних блоках сообщения (message.extra.extblocks), которые добавляют расширения-трекеры">
+                        <input type="checkbox" id="iig_external_blocks" ${settings.externalBlocks ? 'checked' : ''}>
+                        <span>Обрабатывать внешние блоки</span>
                     </label>
 
                     <hr>
@@ -3193,6 +3237,11 @@ function bindSettingsEvents() {
         settings.enabled = e.target.checked;
         saveSettings();
         updateHeaderStatusDot();
+    });
+
+    document.getElementById('iig_external_blocks')?.addEventListener('change', (e) => {
+        settings.externalBlocks = e.target.checked;
+        saveSettings();
     });
     document.getElementById('iig_api_type')?.addEventListener('change', (e) => {
         settings.apiType = e.target.value;
