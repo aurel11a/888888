@@ -2323,3 +2323,10 @@
     margin-top: 8px; padding: 3px 12px; font-size: 0.85em;
     display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
 }
+
+/* ── Профили подключения ── */
+.iig-profile-bar { display: flex; flex-direction: column; gap: 4px; margin-bottom: 4px; }
+.iig-profile-controls { display: flex; align-items: center; gap: 4px; }
+.iig-profile-controls select { flex: 1; min-width: 0; margin: 0; }
+.iig-profile-controls .menu_button { margin: 0; padding: 5px 8px; flex: 0 0 auto; }
+.iig-profile-controls .menu_button.disabled { opacity: 0.35; pointer-events: none; }

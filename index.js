@@ -1171,6 +1171,9 @@ const defaultSettings = Object.freeze({
     // с sillyimages, поэтому его стили переносятся при копировании настроек.
     styles: [],
     activeStyleId: '',
+    // Профили подключения: [{ id, name, ...CONNECTION_FIELDS }].
+    connectionProfiles: [],
+    activeConnectionProfileId: '',
 });
 
 const MAX_CONTEXT_IMAGES = 3;
@@ -1280,6 +1283,7 @@ function getSettings() {
 
 function saveSettings() {
     const context = SillyTavern.getContext();
+    syncActiveConnectionProfile();
     if (typeof window.saveSettings === 'function') {
         try { window.saveSettings(); } catch(e) { context.saveSettingsDebounced(); }
     } else {
@@ -1289,6 +1293,133 @@ function saveSettings() {
 }
 
 function saveSettingsNow() { saveSettings(); }
+
+/* ── Профили подключения ── */
+
+// Поля, которые хранит профиль. Всё остальное (стили, НПС, внешние блоки)
+// общее для всех профилей.
+const CONNECTION_FIELDS = Object.freeze([
+    'apiType', 'endpoint', 'apiKey', 'model', 'size', 'quality',
+    'aspectRatio', 'imageSize', 'naisteraAspectRatio', 'naisteraPreset',
+    'sendCharAvatar', 'sendUserAvatar', 'userAvatarFile',
+    'naisteraSendCharAvatar', 'naisteraSendUserAvatar',
+]);
+
+function makeProfileId() {
+    return `iig-profile-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function extractConnectionFields(settings = getSettings()) {
+    const snapshot = {};
+    for (const key of CONNECTION_FIELDS) snapshot[key] = settings[key];
+    return snapshot;
+}
+
+// Нормализует профили на месте. Первый запуск: профиль «Основной» из
+// текущих настроек. Поля, которых нет в профиле (например, из профилей
+// sillyimages), берутся из текущих настроек.
+function getConnectionProfiles(settings = getSettings()) {
+    if (!Array.isArray(settings.connectionProfiles)) settings.connectionProfiles = [];
+    settings.connectionProfiles = settings.connectionProfiles.filter(p => p && typeof p === 'object');
+    if (settings.connectionProfiles.length === 0) {
+        const id = makeProfileId();
+        settings.connectionProfiles.push({ id, name: 'Основной', ...extractConnectionFields(settings) });
+        settings.activeConnectionProfileId = id;
+    }
+    for (const profile of settings.connectionProfiles) {
+        profile.id = String(profile.id || '') || makeProfileId();
+        profile.name = String(profile.name || '').trim() || 'Профиль';
+        for (const key of Object.keys(profile)) {
+            if (key !== 'id' && key !== 'name' && !CONNECTION_FIELDS.includes(key)) delete profile[key];
+        }
+        for (const key of CONNECTION_FIELDS) {
+            if (!Object.hasOwn(profile, key)) profile[key] = settings[key];
+        }
+    }
+    if (!settings.connectionProfiles.some(p => p.id === settings.activeConnectionProfileId)) {
+        settings.activeConnectionProfileId = settings.connectionProfiles[0].id;
+    }
+    return settings.connectionProfiles;
+}
+
+function getActiveConnectionProfile(settings = getSettings()) {
+    return getConnectionProfiles(settings).find(p => p.id === settings.activeConnectionProfileId) || null;
+}
+
+// Текущие поля всегда пишутся в активный профиль, поэтому отдельная кнопка
+// «Сохранить» не нужна и при переключении ничего не теряется.
+function syncActiveConnectionProfile(settings = getSettings()) {
+    const profile = getActiveConnectionProfile(settings);
+    if (profile) Object.assign(profile, extractConnectionFields(settings));
+}
+
+function loadConnectionProfile(profileId, settings = getSettings()) {
+    syncActiveConnectionProfile(settings);
+    const profile = getConnectionProfiles(settings).find(p => p.id === profileId);
+    if (!profile) return null;
+    for (const key of CONNECTION_FIELDS) settings[key] = profile[key];
+    settings.activeConnectionProfileId = profile.id;
+    saveSettings();
+    return profile;
+}
+
+function createConnectionProfile(name, settings = getSettings()) {
+    syncActiveConnectionProfile(settings);
+    const profile = {
+        id: makeProfileId(),
+        name: String(name || '').trim() || `Профиль ${getConnectionProfiles(settings).length + 1}`,
+        ...extractConnectionFields(settings),
+    };
+    settings.connectionProfiles.push(profile);
+    settings.activeConnectionProfileId = profile.id;
+    saveSettings();
+    return profile;
+}
+
+function renameConnectionProfile(profileId, name, settings = getSettings()) {
+    const profile = getConnectionProfiles(settings).find(p => p.id === profileId);
+    const trimmed = String(name || '').trim();
+    if (!profile || !trimmed) return null;
+    profile.name = trimmed;
+    saveSettings();
+    return profile;
+}
+
+// Последний профиль не удаляется. После удаления активного загружается первый оставшийся.
+function removeConnectionProfile(profileId, settings = getSettings()) {
+    const profiles = getConnectionProfiles(settings);
+    if (profiles.length <= 1) return false;
+    const index = profiles.findIndex(p => p.id === profileId);
+    if (index === -1) return false;
+    const wasActive = settings.activeConnectionProfileId === profileId;
+    profiles.splice(index, 1);
+    if (wasActive) {
+        const next = profiles[0];
+        for (const key of CONNECTION_FIELDS) settings[key] = next[key];
+        settings.activeConnectionProfileId = next.id;
+    }
+    saveSettings();
+    return true;
+}
+
+async function askText(title, defaultValue = '') {
+    const popup = SillyTavern.getContext().Popup;
+    if (typeof popup?.show?.input === 'function') return await popup.show.input(title, '', defaultValue);
+    return window.prompt(title, defaultValue);
+}
+
+async function askConfirm(title, text) {
+    const popup = SillyTavern.getContext().Popup;
+    if (typeof popup?.show?.confirm === 'function') return await popup.show.confirm(title, text);
+    return window.confirm(`${title}\n${text}`);
+}
+
+// Для быстрых настроек (Module 4): они живут в отдельном IIFE.
+window._iigConnectionProfiles = {
+    list: () => getConnectionProfiles().map(p => ({ id: p.id, name: p.name })),
+    activeId: () => getSettings().activeConnectionProfileId,
+    load: (id) => { const p = loadConnectionProfile(id); if (p) applyConnectionFieldsToUI(); return p; },
+};
 
 const LS_KEY = 'iig_npc_refs_v3';
 
@@ -2832,6 +2963,16 @@ function createSettingsUI() {
                     <!-- API Configuration -->
                     <div class="iig-section">
                         <h4><i class="fa-solid fa-plug"></i> Настройки API</h4>
+                        <div class="iig-profile-bar">
+                            <label for="iig_profile_select">Профиль подключения</label>
+                            <div class="iig-profile-controls">
+                                <select id="iig_profile_select" class="text_pole"></select>
+                                <div id="iig_profile_add" class="menu_button" title="Новый профиль (копия текущего)"><i class="fa-solid fa-plus"></i></div>
+                                <div id="iig_profile_rename" class="menu_button" title="Переименовать профиль"><i class="fa-solid fa-pen"></i></div>
+                                <div id="iig_profile_remove" class="menu_button" title="Удалить профиль"><i class="fa-solid fa-trash"></i></div>
+                            </div>
+                        </div>
+                        <p class="hint">Профиль хранит тип API, эндпоинт, ключ, модель и параметры генерации. Изменения сохраняются в активный профиль сами.</p>
                         <div class="flex-row">
                             <label for="iig_api_type">Тип API</label>
                             <select id="iig_api_type" class="flex1">
@@ -3326,11 +3467,7 @@ async function deleteStyle(styleId) {
     const settings = getSettings();
     const style = getStyles(settings).find(st => st.id === styleId);
     if (!style) return;
-    const popup = SillyTavern.getContext().Popup;
-    const ok = typeof popup?.show?.confirm === 'function'
-        ? await popup.show.confirm('Удалить стиль?', `«${style.name}» будет удалён.`)
-        : window.confirm(`Удалить стиль «${style.name}»?`);
-    if (!ok) return;
+    if (!await askConfirm('Удалить стиль?', `«${style.name}» будет удалён.`)) return;
     settings.styles = settings.styles.filter(st => st.id !== styleId);
     if (settings.activeStyleId === styleId) settings.activeStyleId = '';
     if (selectedStyleId === styleId) selectedStyleId = '';
@@ -3446,9 +3583,87 @@ function bindStyleEvents() {
     renderStyleSection();
 }
 
+function renderProfileSelect() {
+    const select = document.getElementById('iig_profile_select');
+    if (!select) return;
+    const settings = getSettings();
+    select.innerHTML = getConnectionProfiles(settings).map(p =>
+        `<option value="${sanitizeForHtml(p.id)}" ${p.id === settings.activeConnectionProfileId ? 'selected' : ''}>${sanitizeForHtml(p.name)}</option>`
+    ).join('');
+    document.getElementById('iig_profile_remove')?.classList.toggle('disabled', settings.connectionProfiles.length <= 1);
+}
+
+// После загрузки профиля переписываем поля формы из настроек.
+function applyConnectionFieldsToUI() {
+    const settings = getSettings();
+    const setValue = (id, value) => { const el = document.getElementById(id); if (el) el.value = value ?? ''; };
+    const setChecked = (id, value) => { const el = document.getElementById(id); if (el) el.checked = !!value; };
+    setValue('iig_endpoint', settings.endpoint);
+    setValue('iig_api_key', settings.apiKey);
+    const model = document.getElementById('iig_model');
+    if (model) {
+        model.innerHTML = settings.model
+            ? `<option value="${sanitizeForHtml(settings.model)}" selected>${sanitizeForHtml(settings.model)}</option>`
+            : '<option value="">-- Выберите модель --</option>';
+    }
+    setValue('iig_size', settings.size);
+    setValue('iig_quality', settings.quality);
+    setValue('iig_aspect_ratio', settings.aspectRatio);
+    setValue('iig_image_size', settings.imageSize);
+    setValue('iig_naistera_aspect_ratio', settings.naisteraAspectRatio);
+    setValue('iig_naistera_preset', settings.naisteraPreset);
+    setChecked('iig_send_char_avatar', settings.sendCharAvatar);
+    setChecked('iig_send_user_avatar', settings.sendUserAvatar);
+    document.getElementById('iig_user_avatar_manual_section')?.classList.toggle('iig-hidden', !settings.sendUserAvatar);
+    selectUserAvatar(settings.userAvatarFile || '');
+    // Тип API последним: его обработчик обновляет видимость полей.
+    const apiType = document.getElementById('iig_api_type');
+    if (apiType) { apiType.value = settings.apiType; apiType.dispatchEvent(new Event('change')); }
+    renderProfileSelect();
+    updateHeaderStatusDot();
+}
+
+function bindProfileEvents() {
+    const settings = getSettings();
+    document.getElementById('iig_profile_select')?.addEventListener('change', (e) => {
+        const profile = loadConnectionProfile(e.target.value);
+        if (!profile) return;
+        applyConnectionFieldsToUI();
+        toastr.info(`Профиль «${profile.name}»`, 'Генерация картинок', { timeOut: 1500 });
+    });
+    document.getElementById('iig_profile_add')?.addEventListener('click', async () => {
+        const name = await askText('Название нового профиля', `Профиль ${getConnectionProfiles(settings).length + 1}`);
+        if (name === null || name === undefined || name === false) return;
+        const profile = createConnectionProfile(name);
+        renderProfileSelect();
+        toastr.success(`Создан профиль «${profile.name}» — копия текущих настроек`, 'Генерация картинок', { timeOut: 2500 });
+    });
+    document.getElementById('iig_profile_rename')?.addEventListener('click', async () => {
+        const active = getActiveConnectionProfile(settings);
+        if (!active) return;
+        const name = await askText('Новое название профиля', active.name);
+        if (!name) return;
+        renameConnectionProfile(active.id, name);
+        renderProfileSelect();
+    });
+    document.getElementById('iig_profile_remove')?.addEventListener('click', async () => {
+        const active = getActiveConnectionProfile(settings);
+        if (!active) return;
+        if (settings.connectionProfiles.length <= 1) {
+            toastr.warning('Нельзя удалить последний профиль', 'Генерация картинок');
+            return;
+        }
+        if (!await askConfirm('Удалить профиль?', `«${active.name}» будет удалён.`)) return;
+        removeConnectionProfile(active.id);
+        applyConnectionFieldsToUI();
+    });
+    renderProfileSelect();
+}
+
 function bindSettingsEvents() {
     const settings = getSettings();
     bindStyleEvents();
+    bindProfileEvents();
 
     const updateVisibility = () => {
         const apiType = settings.apiType;
@@ -5188,6 +5403,21 @@ async function warnIfSillyimagesActive() {
         return accordion('fa-solid fa-plug', 'Настройки API', body => {
             const s = iig();
             if (!s) { body.appendChild(mk('p', { className:'qs-hint', textContent:'Расширение не готово' })); return; }
+
+            /* — Профиль подключения — */
+            const profiles = window._iigConnectionProfiles;
+            if (profiles) {
+                const selProfile = mk('select', { className:'text_pole' });
+                profiles.list().forEach(p => { const o=mk('option',{value:p.id,textContent:p.name}); if(p.id===profiles.activeId())o.selected=true; selProfile.appendChild(o); });
+                selProfile.addEventListener('change', () => {
+                    const p = profiles.load(selProfile.value);
+                    if (!p) return;
+                    toastr.info(`Профиль «${p.name}»`, '', {timeOut:1500});
+                    // Перестраиваем панель, чтобы поля показали значения нового профиля.
+                    qsClose(); qsOpen_();
+                });
+                body.appendChild(rowEl('Профиль', selProfile));
+            }
 
             /* — API Type — */
             const selType = mk('select', { className:'text_pole' });
