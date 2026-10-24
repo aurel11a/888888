@@ -2323,6 +2323,8 @@
 .iig-loading-placeholder .iig-stop-btn {
     margin-top: 8px; padding: 3px 12px; font-size: 0.85em;
     display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+    /* У .menu_button в ST width: min-content — в узком плейсхолдере «Стоп» рассыпался по буквам. */
+    width: max-content !important; white-space: nowrap !important; flex-direction: row !important;
 }
 
 /* ── Профили подключения ── */
