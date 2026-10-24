@@ -1519,14 +1519,6 @@ function resolveEffectiveStyle(tagStyle, settings = getSettings()) {
     return libraryStyle || String(tagStyle || '').trim();
 }
 
-/* ── Стиль в промпте ── */
-
-// Стиль — отдельным блоком перед сценой, как в sillyimages.
-function withStyleBlock(prompt, style) {
-    const value = String(style || '').trim();
-    return value ? `[STYLE: ${value}]\n\n${prompt}` : prompt;
-}
-
 /* ── Инструкция перед референсами ── */
 
 const DEFAULT_REF_INSTRUCTION = '[CRITICAL: The reference image(s) above show the EXACT appearance of the character(s). You MUST precisely copy their: face structure, eye color, hair color and style, skin tone, body type, clothing, and all distinctive features. Do not deviate from the reference appearances.]';
@@ -1777,7 +1769,7 @@ async function loadRefImageAsBase64(path) {
 async function generateImageVoid(prompt, style, options = {}) {
     const settings = getSettings();
     const url = `${settings.endpoint.replace(/\/$/, '')}/v1/chat/completions`;
-    const fullPrompt = withStyleBlock(prompt, style);
+    const fullPrompt = style ? `[Style: ${style}] ${prompt}` : prompt;
     rememberFinalPrompt(fullPrompt);
     const body = {
         model: settings.model,
@@ -1830,7 +1822,7 @@ async function generateImageVoid(prompt, style, options = {}) {
 async function generateImageOpenAI(prompt, style, referenceImages = [], options = {}) {
     const settings = getSettings();
     const url = `${settings.endpoint.replace(/\/$/, '')}/v1/images/generations`;
-    const fullPrompt = withStyleBlock(prompt, style);
+    const fullPrompt = style ? `[Style: ${style}] ${prompt}` : prompt;
     rememberFinalPrompt(fullPrompt);
     let size = settings.size;
     if (options.aspectRatio) {
@@ -1877,10 +1869,10 @@ async function generateImageGemini(prompt, style, referenceImages = [], options 
 
     const refLabels = options.refLabels || [];
     const labelMap = {
-        'char_face':    '⬇️ CHARACTER FACE REFERENCE — copy the facial features, not the drawing style:',
-        'user_face':    '⬇️ USER FACE REFERENCE — copy the facial features, not the drawing style:',
-        'char_outfit':  '⬇️ CHARACTER OUTFIT REFERENCE — copy this clothing, not the drawing style:',
-        'user_outfit':  '⬇️ USER OUTFIT REFERENCE — copy this clothing, not the drawing style:',
+        'char_face':    '⬇️ CHARACTER FACE REFERENCE — copy this face exactly:',
+        'user_face':    '⬇️ USER FACE REFERENCE — copy this face exactly:',
+        'char_outfit':  '⬇️ CHARACTER OUTFIT REFERENCE — copy this clothing:',
+        'user_outfit':  '⬇️ USER OUTFIT REFERENCE — copy this clothing:',
         'context':      '⬇️ SCENE CONTEXT (for style/mood consistency):',
         'style':        '⬇️ ART STYLE REFERENCE — copy only the rendering style:',
     };
@@ -1890,8 +1882,8 @@ async function generateImageGemini(prompt, style, referenceImages = [], options 
     for (let i = 0; i < sliced.length; i++) {
         const label = refLabels[i] || 'reference';
         let labelText = labelMap[label] || '⬇️ REFERENCE IMAGE:';
-        if (label.startsWith('npc_face:')) labelText = `⬇️ ${label.slice(9).toUpperCase()} FACE REFERENCE — copy the facial features, not the drawing style:`;
-        else if (label.startsWith('npc_outfit:')) labelText = `⬇️ ${label.slice(11).toUpperCase()} OUTFIT REFERENCE — ${label.slice(11)} must wear this clothing (not its drawing style):`;
+        if (label.startsWith('npc_face:')) labelText = `⬇️ ${label.slice(9).toUpperCase()} FACE REFERENCE — copy this face exactly:`;
+        else if (label.startsWith('npc_outfit:')) labelText = `⬇️ ${label.slice(11).toUpperCase()} OUTFIT REFERENCE — ${label.slice(11)} must wear exactly this clothing:`;
         parts.push({ text: labelText });
         parts.push({ inlineData: { mimeType: 'image/jpeg', data: sliced[i] } });
     }
@@ -1905,17 +1897,15 @@ async function generateImageGemini(prompt, style, referenceImages = [], options 
     let refInstruction = '';
     if (sliced.length > 0) {
         const rules = [];
-        // Раньше лица были «HIGHEST priority» и «copy exactly» — модель тянула и манеру рисовки
-        // аватарок, а текстовый стиль проигрывал. Теперь роли разведены явно.
-        if (style || hasStyleRef) rules.push(`RENDERING STYLE: Draw the entire image in the art style given in the [STYLE] block below${hasStyleRef ? ' and shown in the ART STYLE REFERENCE image' : ''}. The other reference images only define WHO the characters are and WHAT they wear — never copy their medium, rendering, lighting or art style (photo, 3D, another drawing style). Convert every character into this style.`);
-        if (hasFaces)   rules.push('FACE CONSISTENCY: Keep each character recognizable — replicate the facial features (face structure, eye color/shape, hair color/style/length, skin tone, facial hair, age) from the FACE REFERENCE images, drawn in the target art style.');
-        if (hasOutfits) rules.push('OUTFIT ACCURACY: The characters must wear the clothing shown in the OUTFIT REFERENCE images — same garments, colors, fabrics, accessories — drawn in the target art style. Do not invent or change clothing details.');
-        if (hasContext) rules.push('CONTINUITY: Keep the characters, setting and overall look consistent with the CONTEXT images from the previous scenes.');
-        if (hasStyleRef) rules.push('ART STYLE REFERENCE: Take only its rendering technique, color palette, lighting and linework. Do NOT copy its characters, clothing, objects or composition.');
+        if (hasFaces)   rules.push('FACE CONSISTENCY: You MUST precisely replicate the facial features (face structure, eye color/shape, hair color/style/length, skin tone, facial hair, age) from the FACE REFERENCE images. These faces must be recognizable as the same people across all generated images. This is the HIGHEST priority.');
+        if (hasOutfits) rules.push('OUTFIT ACCURACY: The characters must wear EXACTLY the clothing shown in the OUTFIT REFERENCE images — same garments, colors, fabrics, accessories. Do not invent or change any clothing details.');
+        if (hasContext) rules.push('STYLE CONSISTENCY: Match the art style, lighting, color palette, and rendering quality of the CONTEXT reference images. The generated image should look like it belongs to the same series.');
+        if (hasStyleRef) rules.push('ART STYLE: Match the rendering technique, color palette, lighting and linework of the ART STYLE REFERENCE image. Do NOT copy its characters, clothing, objects or composition.');
+        if (!hasContext && style) rules.push(`STYLE: Generate in "${style}" style consistently. Do not mix styles.`);
         refInstruction = `[STRICT IMAGE GENERATION RULES]\n${rules.join('\n')}\n[END RULES]\n\n`;
     }
 
-    let fullPrompt = withStyleBlock(prompt, style);
+    let fullPrompt = style ? `[Style: ${style}] ${prompt}` : prompt;
     const userRefInstruction = sliced.length > 0 ? getRefInstruction(settings) : '';
     fullPrompt = `${userRefInstruction ? `${userRefInstruction}\n\n` : ''}${refInstruction}${fullPrompt}`;
     rememberFinalPrompt(fullPrompt);
@@ -1955,7 +1945,7 @@ async function generateImageNaistera(prompt, style, options = {}) {
     const endpoint = settings.endpoint.replace(/\/$/, '');
     const url = endpoint.endsWith('/api/generate') ? endpoint : `${endpoint}/api/generate`;
     const referenceImages = options.referenceImages || [];
-    let fullPrompt = withStyleBlock(prompt, style);
+    let fullPrompt = style ? `[Style: ${style}] ${prompt}` : prompt;
     const userRefInstruction = referenceImages.length > 0 ? getRefInstruction(settings) : '';
     if (userRefInstruction) fullPrompt = `${userRefInstruction}\n\n${fullPrompt}`;
     rememberFinalPrompt(fullPrompt);
