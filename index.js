@@ -4356,7 +4356,15 @@ async function warnIfSillyimagesActive() {
     const COSMETICS_SVG = `<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor"><path d="M475.415,117.769l3.126-73.358c0.499-11.705-3.689-22.808-11.796-31.267C458.64,4.686,447.725,0.028,436.01,0.028c-11.715,0-22.631,4.659-30.737,13.117c-8.105,8.458-12.294,19.562-11.796,31.266l3.127,73.358H0v49.198h512v-49.198H475.415z M441.997,117.769h-11.975l-3.187-74.779c-0.146-3.407,1.531-5.687,2.544-6.744c1.013-1.057,3.222-2.83,6.631-2.83c3.409,0,5.617,1.773,6.63,2.829s2.69,3.338,2.544,6.745L441.997,117.769z"/><path d="M475.835,200.355H36.143L17.239,427.204c-3.803,45.632,32.208,84.768,77.997,84.768h321.505c45.79,0,81.799-39.136,77.998-84.768L475.835,200.355z M323.025,300.149c18.263-3.73,33.47-2.522,33.47-2.522s3.923,48.917-23.829,76.668c-7.782,7.782-17.227,13.072-26.791,16.657c10.96-16.661,20.875-38.693,20.875-63.89C326.75,317.605,325.349,308.598,323.025,300.149z M155.504,297.627c0,0,15.208-1.209,33.47,2.522c-2.324,8.448-3.725,17.456-3.725,26.913c0,25.199,9.914,47.23,20.875,63.89c-9.564-3.586-19.011-8.877-26.791-16.657C151.581,346.544,155.504,297.627,155.504,297.627z M184.938,435.486c-39.246,0-71.062-37.363-71.062-37.363s9.899-11.608,25.45-21.884c4.33,7.617,9.709,14.978,16.397,21.664c13.691,13.69,31.657,23.41,53.398,28.889c2.229,0.562,4.429,1.056,6.599,1.501C206.407,432.536,195.966,435.486,184.938,435.486z M256,398.123c0,0-37.364-31.815-37.364-71.062S256,255.999,256,255.999s37.364,31.815,37.364,71.062S256,398.123,256,398.123z M327.061,435.486c-11.028,0-21.469-2.95-30.782-7.193c2.169-0.445,4.37-0.939,6.598-1.501c21.742-5.479,39.708-15.198,53.398-28.889c6.686-6.686,12.065-14.047,16.397-21.664c15.552,10.276,25.45,21.884,25.45,21.884S366.308,435.486,327.061,435.486z"/></svg>`;
 
     let vwOpen = false;
-    let vwMainTab = 'wardrobe';   // 'wardrobe' | 'npc'
+    let vwMainTab = 'wardrobe';   // 'wardrobe' | 'npc' | 'catalog' | 'settings'
+
+    // Общий каталог вещей (его пополняет бот). Публичный репо, читается без токена.
+    const VW_CATALOG_BASE = 'https://raw.githubusercontent.com/aurel11a/777777/main/';
+    const vwCatalog = { index: null, loading: false, error: '', loadedAt: 0 };
+    let vwCatalogFilter = 'all';
+    let vwCatalogQuery = '';
+    let vwCatalogPage = 0;
+    const vwCatalogBusy = new Set(); // `${side}:${itemId}` — идёт импорт
     let vwSubTab   = 'bot';       // 'bot' | 'user'
     let vwView     = 'grid';      // 'grid' | 'list'
     let vwNpcView  = 'grid';
@@ -4586,6 +4594,7 @@ async function warnIfSillyimagesActive() {
         const isW = vwMainTab === 'wardrobe';
         const isS = vwMainTab === 'settings';
         const isN = vwMainTab === 'npc';
+        const isC = vwMainTab === 'catalog';
         const curView = isW ? vwView : vwNpcView;
 
         panel.innerHTML = `
@@ -4597,13 +4606,16 @@ async function warnIfSillyimagesActive() {
                 <button class="vw-mtab ${isN ? 'vw-active' : ''}" data-tab="npc">
                     <i class="fa-solid fa-users"></i><span>НПС</span>
                 </button>
+                <button class="vw-mtab ${isC ? 'vw-active' : ''}" data-tab="catalog">
+                    <i class="fa-solid fa-store"></i><span>Каталог</span>
+                </button>
                 <button class="vw-mtab ${isS ? 'vw-active' : ''}" data-tab="settings">
                     <i class="fa-solid fa-sliders"></i><span>Настройки</span>
                 </button>
             </div>
             <div class="vw-header-right">
                 ${isW ? `<button class="vw-view-btn vw-cleanup-trigger" title="Обслуживание: дубликаты и чистка файлов"><i class="fa-solid fa-broom"></i></button>` : ''}
-                ${!isS ? `
+                ${!isS && !isC ? `
                 <button class="vw-view-btn ${curView === 'grid' ? 'vw-active' : ''}" data-view="grid" title="Сетка"><i class="fa-solid fa-grip"></i></button>
                 <button class="vw-view-btn ${curView === 'list' ? 'vw-active' : ''}" data-view="list" title="Список"><i class="fa-solid fa-list"></i></button>
                 ` : ''}
@@ -4668,6 +4680,7 @@ async function warnIfSillyimagesActive() {
         if (!body) return;
         if (vwMainTab === 'wardrobe') vwRenderWardrobe(body, panel);
         else if (vwMainTab === 'npc') vwRenderNpc(body, panel);
+        else if (vwMainTab === 'catalog') vwRenderCatalog(body, panel);
         else if (vwMainTab === 'settings') {
             body.innerHTML = '';
             if (typeof window._qsBuildSettingsContent === 'function') {
@@ -4797,6 +4810,202 @@ async function warnIfSillyimagesActive() {
                 const o = v.find(sel.dataset.id);
                 if (o) { o.type = e.target.value; vwSaveAndSync(); vwRenderBody(panel); }
             });
+    }
+
+    /* ── Каталог ── */
+
+    async function vwLoadCatalog(panel, force = false) {
+        if (vwCatalog.loading) return;
+        // raw.githubusercontent кэширует файл ~5 минут; метка времени в адресе обходит кэш.
+        if (!force && vwCatalog.index && Date.now() - vwCatalog.loadedAt < 60_000) return;
+        vwCatalog.loading = true; vwCatalog.error = '';
+        if (vwMainTab === 'catalog') vwRenderBody(panel);
+        try {
+            const resp = await fetch(`${VW_CATALOG_BASE}index.json?t=${Date.now()}`, { cache: 'no-store' });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const index = await resp.json();
+            vwCatalog.index = { ...index, items: Array.isArray(index.items) ? index.items : [] };
+            vwCatalog.loadedAt = Date.now();
+        } catch (e) {
+            vwCatalog.error = e.message || String(e);
+        } finally {
+            vwCatalog.loading = false;
+            if (vwMainTab === 'catalog') vwRenderBody(panel);
+        }
+    }
+
+    // Какие вещи каталога уже лежат в гардеробе стороны (по catalogId).
+    function vwImportedIds(side) {
+        const ids = new Set();
+        try {
+            const view = swc()?.viewForSide ? swc().viewForSide(side) : null;
+            for (const o of (view?.list?.() || [])) if (o?.catalogId) ids.add(o.catalogId);
+        } catch (e) { /* персональный режим без персонажа */ }
+        return ids;
+    }
+
+    function vwCatalogTypeOf(item) {
+        const ids = vwTypes().map(t => t.id);
+        return ids.includes(item?.type) ? item.type : (swc()?.FALLBACK_TYPE || 'other');
+    }
+
+    function vwRenderCatalog(body, panel) {
+        if (!vwCatalog.index && !vwCatalog.loading && !vwCatalog.error) { vwLoadCatalog(panel); return; }
+
+        const items = (vwCatalog.index?.items || []).slice().sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
+        const query = vwCatalogQuery.trim().toLowerCase();
+        const counts = {};
+        for (const it of items) { const t = vwCatalogTypeOf(it); counts[t] = (counts[t] || 0) + 1; }
+        if (vwCatalogFilter !== 'all' && !counts[vwCatalogFilter]) vwCatalogFilter = 'all';
+        const shown = items.filter(it =>
+            (vwCatalogFilter === 'all' || vwCatalogTypeOf(it) === vwCatalogFilter) &&
+            (!query || `${it.name || ''} ${it.description || ''}`.toLowerCase().includes(query)));
+        const totalPages = Math.max(1, Math.ceil(shown.length / VW_PAGE_SIZE));
+        vwCatalogPage = Math.min(Math.max(vwCatalogPage, 0), totalPages - 1);
+        const pageItems = shown.slice(vwCatalogPage * VW_PAGE_SIZE, (vwCatalogPage + 1) * VW_PAGE_SIZE);
+        const imported = { bot: vwImportedIds('bot'), user: vwImportedIds('user') };
+
+        let html = `<div class="vw-mode-row vw-catalog-bar">
+            <input type="search" class="text_pole vw-catalog-search" placeholder="Поиск по каталогу" value="${san(vwCatalogQuery)}">
+            <button class="vw-mode-btn vw-catalog-refresh" title="Обновить каталог"><i class="fa-solid fa-rotate ${vwCatalog.loading ? 'fa-spin' : ''}"></i></button>
+        </div>`;
+
+        if (items.length) {
+            html += `<div class="vw-filter-row"><button class="vw-filter-chip ${vwCatalogFilter === 'all' ? 'vw-filter-on' : ''}" data-ctype="all">Все <span class="vw-chip-count">${items.length}</span></button>`;
+            for (const t of vwTypes()) {
+                if (!counts[t.id]) continue;
+                html += `<button class="vw-filter-chip ${vwCatalogFilter === t.id ? 'vw-filter-on' : ''}" data-ctype="${t.id}"><i class="fa-solid ${t.icon}"></i> ${san(t.label)} <span class="vw-chip-count">${counts[t.id]}</span></button>`;
+            }
+            html += '</div>';
+        }
+
+        if (vwCatalog.error && !items.length) {
+            html += `<div class="vw-empty"><i class="fa-solid fa-cloud-bolt"></i><p>Не удалось загрузить каталог<br><small>${san(vwCatalog.error)}</small></p></div>`;
+        } else if (vwCatalog.loading && !items.length) {
+            html += `<div class="vw-empty"><i class="fa-solid fa-spinner fa-spin"></i><p>Загружаю каталог…</p></div>`;
+        } else if (!items.length) {
+            html += `<div class="vw-empty"><i class="fa-solid fa-store"></i><p>Каталог пока пуст<br><small>Вещи добавляются через бота</small></p></div>`;
+        } else if (!shown.length) {
+            html += `<div class="vw-empty"><i class="fa-solid fa-magnifying-glass"></i><p>Ничего не найдено</p></div>`;
+        } else {
+            html += '<div class="vw-outfit-grid">';
+            for (const it of pageItems) {
+                const tm = swc()?.typeMeta ? swc().typeMeta(vwCatalogTypeOf(it)) : { icon: 'fa-tag', label: 'Другое' };
+                const sideBtn = (side, label, icon) => {
+                    const has = imported[side].has(it.id);
+                    const busy = vwCatalogBusy.has(`${side}:${it.id}`);
+                    return `<button class="vw-catalog-take ${has ? 'vw-catalog-has' : ''}" data-side="${side}" data-id="${san(it.id)}" ${busy ? 'disabled' : ''}
+                        title="${has ? `Уже в гардеробе ${label === 'Чар' ? 'Чара' : 'Юзера'} — добавить ещё раз` : `В гардероб ${label === 'Чар' ? 'Чара' : 'Юзера'}`}">
+                        <i class="fa-solid ${busy ? 'fa-spinner fa-spin' : has ? 'fa-check' : icon}"></i> ${label}</button>`;
+                };
+                html += `<div class="vw-card vw-catalog-card" data-id="${san(it.id)}">
+                    <div class="vw-card-img-wrap">
+                        <img src="${san(VW_CATALOG_BASE + (it.thumb || it.image || ''))}" class="vw-card-img" alt="${san(it.name)}" loading="lazy">
+                        <div class="vw-type-badge" title="${san(tm.label)}"><i class="fa-solid ${tm.icon}"></i></div>
+                    </div>
+                    <div class="vw-card-foot">
+                        <span class="vw-card-name" title="${san(it.description || it.name)}">${san(it.name)}</span>
+                    </div>
+                    <div class="vw-catalog-actions">${sideBtn('bot', 'Чар', 'fa-robot')}${sideBtn('user', 'Юзер', 'fa-user')}</div>
+                </div>`;
+            }
+            html += '</div>';
+            if (totalPages > 1) {
+                html += `<div class="vw-pager">
+                    <button class="vw-pager-btn ${vwCatalogPage === 0 ? 'vw-pager-dim' : ''}" data-cpg="prev" title="Назад"><i class="fa-solid fa-chevron-left"></i></button>
+                    <span class="vw-pager-info">Стр. ${vwCatalogPage + 1} / ${totalPages} <small>(${shown.length})</small></span>
+                    <button class="vw-pager-btn ${vwCatalogPage >= totalPages - 1 ? 'vw-pager-dim' : ''}" data-cpg="next" title="Вперёд"><i class="fa-solid fa-chevron-right"></i></button>
+                </div>`;
+            }
+        }
+
+        body.innerHTML = html;
+
+        const search = body.querySelector('.vw-catalog-search');
+        search?.addEventListener('input', (e) => {
+            vwCatalogQuery = e.target.value; vwCatalogPage = 0;
+            const pos = e.target.selectionStart;
+            vwRenderBody(panel);
+            const again = document.querySelector('#vw-body .vw-catalog-search');
+            if (again) { again.focus(); again.setSelectionRange(pos, pos); }
+        });
+        body.querySelector('.vw-catalog-refresh')?.addEventListener('click', () => vwLoadCatalog(panel, true));
+        for (const chip of body.querySelectorAll('.vw-filter-chip[data-ctype]'))
+            chip.addEventListener('click', () => { vwCatalogFilter = chip.dataset.ctype; vwCatalogPage = 0; vwRenderBody(panel); });
+        const fr = body.querySelector('.vw-filter-row');
+        if (fr) fr.addEventListener('wheel', (e) => { if (e.deltaY && !e.shiftKey) { fr.scrollLeft += e.deltaY; e.preventDefault(); } }, { passive: false });
+        for (const b of body.querySelectorAll('.vw-pager-btn[data-cpg]'))
+            b.addEventListener('click', () => {
+                if (b.dataset.cpg === 'prev' && vwCatalogPage > 0) vwCatalogPage--;
+                else if (b.dataset.cpg === 'next' && vwCatalogPage < totalPages - 1) vwCatalogPage++;
+                vwRenderBody(panel);
+            });
+        for (const b of body.querySelectorAll('.vw-catalog-take'))
+            b.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const item = items.find(it => it.id === b.dataset.id);
+                if (item) vwImportCatalogItem(item, b.dataset.side, panel);
+            });
+
+        // Каталог мог обновиться, пока панель была закрыта.
+        if (vwCatalog.index && !vwCatalog.loading && !vwCatalog.error && Date.now() - vwCatalog.loadedAt > 5 * 60_000) vwLoadCatalog(panel);
+    }
+
+    // Картинка из каталога (WebP) → JPEG base64 без префикса, как остальные наряды.
+    async function vwCatalogImageBase64(url, maxDim) {
+        const resp = await fetch(url, { cache: 'no-store' });
+        if (!resp.ok) throw new Error(`картинка не загрузилась (HTTP ${resp.status})`);
+        const bitmap = await createImageBitmap(await resp.blob());
+        const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(bitmap.width * scale);
+        canvas.height = Math.round(bitmap.height * scale);
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#fff'; // прозрачный фон → белый, JPEG без альфы
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        bitmap.close?.();
+        return canvas.toDataURL('image/jpeg', 0.88).split(',')[1];
+    }
+
+    async function vwImportCatalogItem(item, side, panel) {
+        const key = `${side}:${item.id}`;
+        if (vwCatalogBusy.has(key)) return;
+        const view = swc()?.viewForSide ? swc().viewForSide(side) : null;
+        if (!view) { toastr.error('Гардероб ещё не загрузился', 'Каталог'); return; }
+        if (!view.shared && !vwCharName()) {
+            toastr.warning('Выбери персонажа или включи «Общий» гардероб', 'Каталог');
+            return;
+        }
+        const sideName = side === 'bot' ? 'Чара' : 'Юзера';
+        vwCatalogBusy.add(key);
+        vwRenderBody(panel);
+        try {
+            const base64 = await vwCatalogImageBase64(VW_CATALOG_BASE + item.image, swc()?.maxDim ? swc().maxDim() : 768);
+            const newItem = {
+                id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+                name: item.name || 'Без имени',
+                type: vwCatalogTypeOf(item),
+                description: item.description || '',
+                addedAt: Date.now(),
+                catalogId: item.id,
+            };
+            if (view.shared && swc()?.saveFile) {
+                try { newItem.imagePath = await swc().saveFile(base64, (side === 'bot' ? 'sw_bot_' : 'sw_user_') + newItem.name); }
+                catch (err) { console.warn('[vw] catalog file store failed, fallback base64:', err.message); }
+            }
+            if (!newItem.imagePath) newItem.base64 = base64;
+            view.add(newItem);
+            if (view.shared && swc()?.preloadSharedActive) swc().preloadSharedActive(side);
+            vwSaveAndSync();
+            vwRefreshBtn();
+            toastr.success(`«${newItem.name}» добавлено в гардероб ${sideName}`, 'Каталог', { timeOut: 2500 });
+        } catch (e) {
+            toastr.error(`Не удалось добавить: ${e.message}`, 'Каталог');
+        } finally {
+            vwCatalogBusy.delete(key);
+            if (vwMainTab === 'catalog') vwRenderBody(panel);
+        }
     }
 
     /* ── Режим (Перс/Общий) + фильтр по типам ── */
