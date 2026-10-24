@@ -376,7 +376,6 @@
 .iig-header-dot.active {
     background: #4caf50;
     box-shadow: 0 0 6px rgba(76, 175, 80, 0.5);
-    animation: iig-dot-pulse 2s ease-in-out infinite;
 }
 
 @keyframes iig-dot-pulse {

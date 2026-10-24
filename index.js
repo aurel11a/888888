@@ -2031,8 +2031,8 @@ function showLastImageRequest() {
     const refsHtml = !req ? '' : req.refs.length
         ? `<div class="iig-lastreq-refs">${req.refs.map((r, i) => `
             <figure>
-                <img src="${sanitizeForHtml(r.src)}" alt="">
-                <figcaption><b>${i + 1}.</b> ${sanitizeForHtml(describeRefLabel(r.label))}<small>${Math.round(r.src.length * 0.75 / 1024)} КБ</small></figcaption>
+                <img src="${sanitizeForHtml(r.src || 'data:image/jpeg;base64,' + r.b64)}" alt="">
+                <figcaption><b>${i + 1}.</b> ${sanitizeForHtml(describeRefLabel(r.label))}<small>${Math.round((r.src || r.b64).length * 0.75 / 1024)} КБ</small></figcaption>
             </figure>`).join('')}</div>`
         : '<p class="iig-lastreq-muted">Картинки-референсы не отправлялись.</p>';
     const backdrop = document.createElement('div');
@@ -2243,11 +2243,11 @@ async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {
     if (isNaisteraType) {
         sentRefs = referenceDataUrls.slice(0, 4).map((src, i) => ({ label: urlLabels[i] || 'reference', src }));
     } else if (isGeminiType) {
-        sentRefs = referenceImages.slice(0, maxRefs).map((b64, i) => ({ label: refLabels[i] || 'reference', src: 'data:image/jpeg;base64,' + b64 }));
+        sentRefs = referenceImages.slice(0, maxRefs).map((b64, i) => ({ label: refLabels[i] || 'reference', b64 }));
     } else if (settings.apiType === 'void') {
         refsNote = 'VoidAI не принимает картинки-референсы: ушёл только текст.';
     } else if (referenceImages.length) {
-        sentRefs = referenceImages.slice(0, 1).map((b64, i) => ({ label: refLabels[i] || 'reference', src: 'data:image/jpeg;base64,' + b64 }));
+        sentRefs = referenceImages.slice(0, 1).map((b64, i) => ({ label: refLabels[i] || 'reference', b64 }));
         refsNote = 'OpenAI-режим: отправляется только первая картинка, и обычный запрос генерации её, скорее всего, не учитывает.';
     }
     lastImageRequest = {
@@ -4452,6 +4452,7 @@ function initLightbox() {
 
     function lbClose() {
         overlay.classList.remove('open');
+        if (_lbRO) { _lbRO.disconnect(); _lbRO = null; }
         document.body.style.overflow = '';
         document.documentElement.style.overflow = '';
         resetZoom();
