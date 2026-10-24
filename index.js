@@ -964,9 +964,9 @@
             const botData = cn ? swGetActiveSideOutfit('bot') : null;
             const userData = swGetActiveSideOutfit('user');
             const lines = [];
-            if (botData?.description) lines.push(`[${cn || 'Персонаж'} сейчас одет(а): ${botData.description}]`);
-            if (userData?.description) lines.push(`[{{user}} сейчас одет(а): ${userData.description}]`);
-            for (const npc of swNpcsInScene()) lines.push(`[${npc.name} сейчас одет(а): ${npc.outfit.description}]`);
+            if (botData?.description) lines.push(`[${cn || 'The character'} is currently wearing: ${botData.description}]`);
+            if (userData?.description) lines.push(`[{{user}} is currently wearing: ${userData.description}]`);
+            for (const npc of swNpcsInScene()) lines.push(`[${npc.name} is currently wearing: ${npc.outfit.description}]`);
             const injectionText = lines.length > 0 ? lines.join('\n') : '';
             // position 1 = IN_CHAT, depth 1 = before last message (like Author's Note)
             ctx.setExtensionPrompt(SW_PROMPT_KEY, injectionText, 1, 1);
@@ -2689,6 +2689,9 @@ function wrapImageWithRegenBtn(img, messageId, imgIndex) {
         if (rb) { rb.dataset.messageId = String(messageId); rb.dataset.tagIndex = String(imgIndex); }
         const fb = w.querySelector('.iig-corner-fs');
         if (fb) fb.dataset.imgSrc = img.getAttribute('src') || '';
+        let db = w.querySelector('.iig-corner-dl');
+        if (!db) { db = makeDownloadCornerBtn(); w.querySelector('.iig-img-actions')?.prepend(db); }
+        db.dataset.imgSrc = img.getAttribute('src') || '';
         return w;
     }
     const wrap = document.createElement('div');
@@ -2711,6 +2714,10 @@ function wrapImageWithRegenBtn(img, messageId, imgIndex) {
     regenBtn.dataset.messageId = String(messageId);
     regenBtn.dataset.tagIndex = String(imgIndex);
 
+    const dlBtn = makeDownloadCornerBtn();
+    dlBtn.dataset.imgSrc = img.getAttribute('src') || '';
+
+    actions.appendChild(dlBtn);
     actions.appendChild(fsBtn);
     actions.appendChild(regenBtn);
 
@@ -2718,6 +2725,48 @@ function wrapImageWithRegenBtn(img, messageId, imgIndex) {
     wrap.appendChild(actions);
     wrap.appendChild(img);
     return wrap;
+}
+
+function makeDownloadCornerBtn() {
+    const btn = document.createElement('div');
+    btn.className = 'iig-corner-btn iig-corner-dl';
+    btn.title = 'Скачать';
+    btn.innerHTML = '<i class="fa-solid fa-download"></i>';
+    return btn;
+}
+
+function guessImageExtension(src, mime = '') {
+    const fromMime = (mime.match(/image\/([a-z0-9+]+)/i) || [])[1];
+    if (fromMime) return fromMime.replace('jpeg', 'jpg').replace('svg+xml', 'svg');
+    const fromPath = (src.match(/\.([a-z0-9]+)(?:[?#]|$)/i) || [])[1];
+    return fromPath ? fromPath.toLowerCase() : 'png';
+}
+
+// Скачать картинку. На iPhone/iPad Safari плохо скачивает по ссылке, поэтому там
+// открывается системное меню «Поделиться», где есть «Сохранить изображение».
+async function downloadGeneratedImage(src) {
+    try {
+        const blob = await (await fetch(src)).blob();
+        const name = `image_${new Date().toISOString().replace(/[:.]/g, '-')}.${guessImageExtension(src, blob.type)}`;
+        if (IS_IOS && typeof File === 'function' && navigator.canShare) {
+            const file = new File([blob], name, { type: blob.type || 'image/png' });
+            if (navigator.canShare({ files: [file] })) {
+                try { await navigator.share({ files: [file] }); return; }
+                catch (e) { if (e?.name === 'AbortError') return; /* иначе — обычное скачивание */ }
+            }
+        }
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) {
+        iigLog('ERROR', 'Image download failed:', e.message);
+        toastr.error('Не получилось скачать картинку', 'Генерация картинок');
+    }
 }
 
 async function regenerateSingleImage(messageId, tagIndex) {
@@ -4154,10 +4203,14 @@ function initLightbox() {
     overlay.innerHTML = `
         <div class="iig-lightbox-backdrop"></div>
         <button class="iig-lightbox-close" title="Закрыть"><i class="fa-solid fa-xmark"></i></button>
+        <button class="iig-lightbox-download" title="Скачать"><i class="fa-solid fa-download"></i></button>
+        <button class="iig-lightbox-nav iig-lightbox-prev" title="Предыдущая"><i class="fa-solid fa-chevron-left"></i></button>
+        <button class="iig-lightbox-nav iig-lightbox-next" title="Следующая"><i class="fa-solid fa-chevron-right"></i></button>
+        <div class="iig-lightbox-counter"></div>
         <div class="iig-lightbox-content">
             <img class="iig-lightbox-img" src="" alt="Full-size preview" draggable="false">
             <div class="iig-lightbox-caption"></div>
-            <div class="iig-lightbox-hint">Колёсико / щипок — зум &nbsp;·&nbsp; двойной тап — 2.5× &nbsp;·&nbsp; тащи пальцем — перемещение</div>
+            <div class="iig-lightbox-hint">Колёсико / щипок — зум &nbsp;·&nbsp; двойной тап — 2.5× &nbsp;·&nbsp; свайп или ← → — листать</div>
         </div>
     `;
 
@@ -4284,11 +4337,61 @@ function initLightbox() {
         if (e.touches.length === 0) { _panActive = false; }
     }, { passive: true });
 
+    // ── Галерея: листаем все сгенерированные картинки чата ──────────
+    let gallery = [];   // [{ src, alt }]
+    let gIndex = 0;
+    const counterEl = overlay.querySelector('.iig-lightbox-counter');
+
+    function collectChatImages() {
+        const seen = new Set();
+        const out = [];
+        for (const img of document.querySelectorAll('#chat .iig-img-wrap img, #chat img.iig-generated-image')) {
+            const src = img.getAttribute('src') || '';
+            if (!src || src.includes('error.svg') || src.includes('[IMG:') || seen.has(src)) continue;
+            seen.add(src);
+            out.push({ src, alt: img.alt || '' });
+        }
+        return out;
+    }
+
+    function showAt(i) {
+        if (!gallery.length) return;
+        gIndex = (i + gallery.length) % gallery.length;
+        resetZoom();
+        imgEl.src = gallery[gIndex].src;
+        captionEl.textContent = gallery[gIndex].alt;
+        const multi = gallery.length > 1;
+        overlay.classList.toggle('iig-lb-multi', multi);
+        counterEl.textContent = multi ? `${gIndex + 1} / ${gallery.length}` : '';
+    }
+
+    // Свайп влево/вправо, когда картинка не увеличена.
+    let _swX = 0, _swY = 0, _swOn = false;
+    imgEl.addEventListener('touchstart', (e) => {
+        _swOn = e.touches.length === 1 && sc <= 1;
+        if (_swOn) { _swX = e.touches[0].clientX; _swY = e.touches[0].clientY; }
+    }, { passive: true });
+    imgEl.addEventListener('touchend', (e) => {
+        if (!_swOn || sc > 1 || gallery.length < 2 || !e.changedTouches.length) { _swOn = false; return; }
+        _swOn = false;
+        const dx = e.changedTouches[0].clientX - _swX;
+        const dy = e.changedTouches[0].clientY - _swY;
+        if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) showAt(gIndex + (dx < 0 ? 1 : -1));
+    }, { passive: true });
+
+    overlay.querySelector('.iig-lightbox-prev').addEventListener('click', (e) => { e.stopPropagation(); showAt(gIndex - 1); });
+    overlay.querySelector('.iig-lightbox-next').addEventListener('click', (e) => { e.stopPropagation(); showAt(gIndex + 1); });
+    overlay.querySelector('.iig-lightbox-download').addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (gallery[gIndex]) downloadGeneratedImage(gallery[gIndex].src);
+    });
+
     // ── Open / close ────────────────────────────────────────────────
     function lbOpen(src, caption) {
-        resetZoom();
-        imgEl.src = src;
-        captionEl.textContent = caption || '';
+        gallery = collectChatImages();
+        const idx = gallery.findIndex(g => g.src === src);
+        if (idx === -1) { gallery = [{ src, alt: caption || '' }]; showAt(0); }
+        else { if (caption) gallery[idx].alt = caption; showAt(idx); }
         _fixPos();
         if (!_lbRO) {
             _lbRO = new ResizeObserver(_fixPos);
@@ -4316,9 +4419,12 @@ function initLightbox() {
     closeBtn.addEventListener('click',    lbClose);
     closeBtn.addEventListener('touchend', (e) => { e.preventDefault(); lbClose(); }, { passive: false });
 
-    // Escape key
+    // Escape — закрыть, стрелки — листать (если не увеличено)
     document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && overlay.classList.contains('open')) lbClose();
+        if (!overlay.classList.contains('open')) return;
+        if (e.key === 'Escape') lbClose();
+        else if (e.key === 'ArrowLeft' && sc <= 1) { e.preventDefault(); showAt(gIndex - 1); }
+        else if (e.key === 'ArrowRight' && sc <= 1) { e.preventDefault(); showAt(gIndex + 1); }
     });
 
     // ── Единый CAPTURE-обработчик (как в sillyimages): кнопки всегда «выигрывают»
@@ -4336,7 +4442,15 @@ function initLightbox() {
             if (!isNaN(mid) && !isNaN(idx)) regenerateSingleImage(mid, idx);
             return;
         }
-        // 2) Кнопка «на весь экран»
+        // 2) Кнопка «скачать»
+        const dlBtn = e.target.closest('.iig-corner-dl');
+        if (dlBtn) {
+            e.preventDefault(); e.stopPropagation();
+            const src = dlBtn.dataset.imgSrc || '';
+            if (src && !src.includes('error.svg')) downloadGeneratedImage(src);
+            return;
+        }
+        // 3) Кнопка «на весь экран»
         const fsBtn = e.target.closest('.iig-corner-fs');
         if (fsBtn) {
             e.preventDefault(); e.stopPropagation();
@@ -4344,7 +4458,7 @@ function initLightbox() {
             if (src && !src.includes('error.svg')) lbOpen(src, '');
             return;
         }
-        // 3) Клик по самой картинке → лайтбокс
+        // 4) Клик по самой картинке → лайтбокс
         const img = e.target.closest('.iig-img-wrap img, img.iig-generated-image');
         if (img) {
             const src = img.getAttribute('src') || '';

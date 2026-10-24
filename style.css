@@ -2356,7 +2356,7 @@
 }
 
 /* Оверлеи висят на <html>, вне body, и сами не получают шрифт и цвет темы. */
-#vw-overlay, #qs-overlay, .vw-sheet-backdrop {
+#vw-overlay, #qs-overlay, .vw-sheet-backdrop, .iig-lightbox {
     font-family: var(--mainFontFamily, sans-serif);
     color: var(--SmartThemeBodyColor);
 }
@@ -2447,4 +2447,42 @@
     white-space: pre-wrap; word-break: break-word; margin: 0; padding: 10px; border-radius: 8px;
     font-size: 0.82em; max-height: 40vh; overflow-y: auto;
     background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.06);
+}
+
+/* ── Лайтбокс: листание и скачивание ── */
+.iig-lightbox-download,
+.iig-lightbox-nav {
+    position: absolute; z-index: 10501;
+    width: 40px; height: 40px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(255, 255, 255, 0.13) !important;
+    border: 1.5px solid rgba(255, 255, 255, 0.18);
+    color: rgba(255, 255, 255, 0.9) !important;
+    cursor: pointer; font-size: 1.05em;
+    transition: background 0.18s ease, transform 0.15s ease;
+}
+.iig-lightbox-download { top: 14px; right: 64px; }
+.iig-lightbox-nav { top: 50%; margin-top: -20px; display: none; }
+.iig-lightbox.iig-lb-multi .iig-lightbox-nav { display: flex; }
+.iig-lightbox-prev { left: 12px; }
+.iig-lightbox-next { right: 12px; }
+.iig-lightbox-download:hover, .iig-lightbox-nav:hover { background: rgba(255, 255, 255, 0.24) !important; transform: scale(1.08); }
+.iig-lightbox-nav:hover { transform: scale(1.08); }
+.iig-lightbox-counter {
+    position: absolute; top: 22px; left: 50%; transform: translateX(-50%); z-index: 10501;
+    padding: 3px 10px; border-radius: 999px; font-size: 0.85em;
+    background: rgba(0, 0, 0, 0.45); color: rgba(255, 255, 255, 0.9);
+    pointer-events: none;
+}
+.iig-lightbox-counter:empty { display: none; }
+/* Некоторые темы ST задают всем кнопкам position: relative — кнопки лайтбокса уезжали в общий поток. */
+.iig-lightbox .iig-lightbox-close,
+.iig-lightbox .iig-lightbox-download,
+.iig-lightbox .iig-lightbox-nav { position: absolute !important; margin: 0; padding: 0; }
+
+/* На телефоне стрелки ниже и прозрачнее: листают в основном свайпом. */
+@media (max-width: 600px) {
+    .iig-lightbox-nav { top: auto; bottom: 22px; margin-top: 0; opacity: 0.85; }
+    .iig-lightbox-prev { left: 22%; }
+    .iig-lightbox-next { right: 22%; }
 }
