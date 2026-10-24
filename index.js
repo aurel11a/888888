@@ -1316,12 +1316,58 @@ function getCurrentCharacterRefs() {
     return settings;
 }
 
+/* ── Стили ── */
+
+function makeStyleId() {
+    return `iig-style-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// Нормализует список стилей на месте (объекты не пересоздаются, чтобы
+// ссылки из UI оставались живыми).
+function getStyles(settings = getSettings()) {
+    if (!Array.isArray(settings.styles)) settings.styles = [];
+    settings.styles = settings.styles.filter(st => st && typeof st === 'object');
+    for (const st of settings.styles) {
+        st.id = String(st.id || '') || makeStyleId();
+        st.name = String(st.name || '').trim() || 'Стиль';
+        st.value = String(st.value || '');
+        st.imagePath = String(st.imagePath || '');
+    }
+    if (!settings.styles.some(st => st.id === settings.activeStyleId)) settings.activeStyleId = '';
+    return settings.styles;
+}
+
+function getActiveStyle(settings = getSettings()) {
+    return getStyles(settings).find(st => st.id === settings.activeStyleId) || null;
+}
+
+// Активный стиль из библиотеки важнее style из тега: так стиль не скачет
+// от картинки к картинке, даже если LLM пишет его по-разному.
+function resolveEffectiveStyle(tagStyle, settings = getSettings()) {
+    const libraryStyle = String(getActiveStyle(settings)?.value || '').trim();
+    return libraryStyle || String(tagStyle || '').trim();
+}
+
+/* ── Лимит референсов под модель ── */
+
+// Сколько картинок-референсов модель реально обрабатывает (по докам Google).
+// Для незнакомых моделей оставляем прежние 4.
+function getMaxReferenceImages(settings = getSettings()) {
+    const id = String(settings.model || '').toLowerCase().trim();
+    if (settings.apiType === 'gemini' || isGeminiModel(id)) {
+        if (id.startsWith('gemini-3.1-flash-image') || id.includes('nano-banana-2')) return 14;
+        if (id.startsWith('gemini-3-pro-image') || id.includes('nano-banana-pro')) return 11;
+        if (id.startsWith('gemini-2.5-flash-image') || id.includes('nano-banana')) return 3;
+    }
+    return 4;
+}
+
 function matchNpcReferences(prompt, npcList) {
     if (!prompt || !npcList || npcList.length === 0) return [];
     const lowerPrompt = prompt.toLowerCase();
     const matched = [];
     for (const npc of npcList) {
-        if (!npc || !npc.name || (!npc.imagePath && !npc.imageBase64)) continue;
+        if (!npc || npc.enabled === false || !npc.name || (!npc.imagePath && !npc.imageBase64)) continue;
         const words = npc.name.trim().split(/\s+/).filter(w => w.length > 2);
         if (words.length === 0) continue;
         if (words.some(word => lowerPrompt.includes(word.toLowerCase()))) {
@@ -1641,10 +1687,11 @@ async function generateImageGemini(prompt, style, referenceImages = [], options 
         'char_outfit':  '⬇️ CHARACTER OUTFIT REFERENCE — copy this clothing:',
         'user_outfit':  '⬇️ USER OUTFIT REFERENCE — copy this clothing:',
         'context':      '⬇️ SCENE CONTEXT (for style/mood consistency):',
+        'style':        '⬇️ ART STYLE REFERENCE — copy only the rendering style:',
     };
 
     const parts = [];
-    const sliced = referenceImages.slice(0, 4);
+    const sliced = referenceImages.slice(0, getMaxReferenceImages(settings));
     for (let i = 0; i < sliced.length; i++) {
         const label = refLabels[i] || 'reference';
         parts.push({ text: labelMap[label] || '⬇️ REFERENCE IMAGE:' });
@@ -1655,6 +1702,7 @@ async function generateImageGemini(prompt, style, referenceImages = [], options 
     const hasFaces   = refLabels.some(l => l.endsWith('_face'));
     const hasOutfits = refLabels.some(l => l.endsWith('_outfit'));
     const hasContext = refLabels.includes('context');
+    const hasStyleRef = refLabels.includes('style');
 
     let refInstruction = '';
     if (sliced.length > 0) {
@@ -1662,6 +1710,7 @@ async function generateImageGemini(prompt, style, referenceImages = [], options 
         if (hasFaces)   rules.push('FACE CONSISTENCY: You MUST precisely replicate the facial features (face structure, eye color/shape, hair color/style/length, skin tone, facial hair, age) from the FACE REFERENCE images. These faces must be recognizable as the same people across all generated images. This is the HIGHEST priority.');
         if (hasOutfits) rules.push('OUTFIT ACCURACY: The characters must wear EXACTLY the clothing shown in the OUTFIT REFERENCE images — same garments, colors, fabrics, accessories. Do not invent or change any clothing details.');
         if (hasContext) rules.push('STYLE CONSISTENCY: Match the art style, lighting, color palette, and rendering quality of the CONTEXT reference images. The generated image should look like it belongs to the same series.');
+        if (hasStyleRef) rules.push('ART STYLE: Match the rendering technique, color palette, lighting and linework of the ART STYLE REFERENCE image. Do NOT copy its characters, clothing, objects or composition.');
         if (!hasContext && style) rules.push(`STYLE: Generate in "${style}" style consistently. Do not mix styles.`);
         refInstruction = `[STRICT IMAGE GENERATION RULES]\n${rules.join('\n')}\n[END RULES]\n\n`;
     }
@@ -1741,6 +1790,9 @@ async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {
     const referenceImages = [];   // base64 — for Gemini / OpenAI
     const referenceDataUrls = []; // data URLs — for Naistera
     const refLabels = [];         // parallel labels for Gemini label system
+    const maxRefs = getMaxReferenceImages(settings);
+    const activeStyle = getActiveStyle(settings);
+    style = resolveEffectiveStyle(style, settings);
 
     const isGeminiType = settings.apiType === 'gemini' || isGeminiModel(settings.model);
     const isNaisteraType = settings.apiType === 'naistera';
@@ -1761,12 +1813,12 @@ async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {
     if (isNaisteraType) {
         if (settings.naisteraSendCharAvatar) {
             const d = await getCharacterAvatarDataUrl();
-            if (d && referenceDataUrls.length < 4) referenceDataUrls.push(d);
+            if (d && referenceDataUrls.length < maxRefs) referenceDataUrls.push(d);
         }
     } else {
         if (settings.sendCharAvatar) {
             const charAvatar = await getCharacterAvatarBase64();
-            if (charAvatar && referenceImages.length < 4) { referenceImages.push(charAvatar); refLabels.push('char_face'); }
+            if (charAvatar && referenceImages.length < maxRefs) { referenceImages.push(charAvatar); refLabels.push('char_face'); }
         }
     }
 
@@ -1774,26 +1826,26 @@ async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {
     if (isNaisteraType) {
         if (settings.naisteraSendUserAvatar) {
             const d = await getUserAvatarDataUrl();
-            if (d && referenceDataUrls.length < 4) referenceDataUrls.push(d);
+            if (d && referenceDataUrls.length < maxRefs) referenceDataUrls.push(d);
         }
     } else {
         if (settings.sendUserAvatar) {
             const userAvatar = await getUserAvatarBase64();
-            if (userAvatar && referenceImages.length < 4) { referenceImages.push(userAvatar); refLabels.push('user_face'); }
+            if (userAvatar && referenceImages.length < maxRefs) { referenceImages.push(userAvatar); refLabels.push('user_face'); }
         }
     }
 
     // Manual photo uploads (char/user slots) — override if uploaded
     if (!isNaisteraType) {
         const charB64 = await getB64(refs.charRef, 'charRef');
-        if (charB64 && referenceImages.length < 4) { referenceImages.push(charB64); refLabels.push('char_face'); }
+        if (charB64 && referenceImages.length < maxRefs) { referenceImages.push(charB64); refLabels.push('char_face'); }
         const userB64 = await getB64(refs.userRef, 'userRef');
-        if (userB64 && referenceImages.length < 4) { referenceImages.push(userB64); refLabels.push('user_face'); }
+        if (userB64 && referenceImages.length < maxRefs) { referenceImages.push(userB64); refLabels.push('user_face'); }
     } else {
         const charUrl = await getDataUrl(refs.charRef);
-        if (charUrl && referenceDataUrls.length < 4) referenceDataUrls.push(charUrl);
+        if (charUrl && referenceDataUrls.length < maxRefs) referenceDataUrls.push(charUrl);
         const userUrl = await getDataUrl(refs.userRef);
-        if (userUrl && referenceDataUrls.length < 4) referenceDataUrls.push(userUrl);
+        if (userUrl && referenceDataUrls.length < maxRefs) referenceDataUrls.push(userUrl);
     }
 
     // ── Wardrobe integration ──────────────────────────────────────
@@ -1805,16 +1857,16 @@ async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {
 
         let wardrobeAdded = 0;
         if (isGeminiType) {
-            if (botB64 && referenceImages.length < 4) { referenceImages.push(botB64); refLabels.push('char_outfit'); wardrobeAdded++; iigLog('INFO', `Wardrobe bot: "${botData?.name}"`); }
-            if (userB64 && referenceImages.length < 4) { referenceImages.push(userB64); refLabels.push('user_outfit'); wardrobeAdded++; iigLog('INFO', `Wardrobe user: "${userData?.name}"`); }
+            if (botB64 && referenceImages.length < maxRefs) { referenceImages.push(botB64); refLabels.push('char_outfit'); wardrobeAdded++; iigLog('INFO', `Wardrobe bot: "${botData?.name}"`); }
+            if (userB64 && referenceImages.length < maxRefs) { referenceImages.push(userB64); refLabels.push('user_outfit'); wardrobeAdded++; iigLog('INFO', `Wardrobe user: "${userData?.name}"`); }
         } else if (isNaisteraType) {
             const botUrl = window.sillyWardrobe.getActiveOutfitDataUrl('bot');
             const userUrl = window.sillyWardrobe.getActiveOutfitDataUrl('user');
-            if (botUrl && referenceDataUrls.length < 4) { referenceDataUrls.push(botUrl); wardrobeAdded++; }
-            if (userUrl && referenceDataUrls.length < 4) { referenceDataUrls.push(userUrl); wardrobeAdded++; }
+            if (botUrl && referenceDataUrls.length < maxRefs) { referenceDataUrls.push(botUrl); wardrobeAdded++; }
+            if (userUrl && referenceDataUrls.length < maxRefs) { referenceDataUrls.push(userUrl); wardrobeAdded++; }
         } else {
-            if (botB64 && referenceImages.length < 4) { referenceImages.push(botB64); wardrobeAdded++; }
-            if (userB64 && referenceImages.length < 4) { referenceImages.push(userB64); wardrobeAdded++; }
+            if (botB64 && referenceImages.length < maxRefs) { referenceImages.push(botB64); wardrobeAdded++; }
+            if (userB64 && referenceImages.length < maxRefs) { referenceImages.push(userB64); wardrobeAdded++; }
         }
         if (wardrobeAdded > 0) iigLog('INFO', `Wardrobe: добавлено ${wardrobeAdded} аутфита(ов)`);
 
@@ -1828,28 +1880,40 @@ async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {
         }
     }
 
+    // ── Картинка активного стиля ─────────────────────────────────
+    if (activeStyle?.imagePath && (isGeminiType || isNaisteraType)) {
+        const styleB64 = await loadRefImageAsBase64(activeStyle.imagePath);
+        if (styleB64 && isGeminiType && referenceImages.length < maxRefs) {
+            referenceImages.push(styleB64); refLabels.push('style');
+            iigLog('INFO', `Style image: "${activeStyle.name}"`);
+        } else if (styleB64 && isNaisteraType && referenceDataUrls.length < maxRefs) {
+            referenceDataUrls.push('data:image/jpeg;base64,' + styleB64);
+            iigLog('INFO', `Style image (naistera): "${activeStyle.name}"`);
+        }
+    }
+
     // ── Image context: предыдущие картинки из чата как рефы ──────
     if (settings.imageContextEnabled) {
         const contextCount = normalizeImageContextCount(settings.imageContextCount);
         if (isGeminiType) {
             const contextRefs = await collectPreviousContextReferences(options.messageId, 'base64', contextCount);
             for (const ref of contextRefs) {
-                if (referenceImages.length < 4) { referenceImages.push(ref); refLabels.push('context'); iigLog('INFO', `Image context ref added (gemini)`); }
+                if (referenceImages.length < maxRefs) { referenceImages.push(ref); refLabels.push('context'); iigLog('INFO', `Image context ref added (gemini)`); }
             }
         } else if (isNaisteraType) {
             const contextRefs = await collectPreviousContextReferences(options.messageId, 'dataUrl', contextCount);
             for (const ref of contextRefs) {
-                if (referenceDataUrls.length < 4) { referenceDataUrls.push(ref); iigLog('INFO', `Image context ref added (naistera)`); }
+                if (referenceDataUrls.length < maxRefs) { referenceDataUrls.push(ref); iigLog('INFO', `Image context ref added (naistera)`); }
             }
         }
     }
 
     // ── NPC refs ──────────────────────────────────────────────────
     const currentCount = isNaisteraType ? referenceDataUrls.length : referenceImages.length;
-    if (currentCount < 4) {
+    if (currentCount < maxRefs) {
         const matchedNpcs = matchNpcReferences(prompt, refs.npcReferences || []);
         for (const npc of matchedNpcs) {
-            if ((isNaisteraType ? referenceDataUrls.length : referenceImages.length) >= 4) break;
+            if ((isNaisteraType ? referenceDataUrls.length : referenceImages.length) >= maxRefs) break;
             if (isNaisteraType) {
                 const url = await getDataUrl(npc);
                 if (url) { referenceDataUrls.push(url); iigLog('INFO', `NPC (naistera): ${npc.name}`); }
@@ -1860,7 +1924,7 @@ async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {
         }
     }
 
-    iigLog('INFO', `Refs: ${referenceImages.length} base64, ${referenceDataUrls.length} dataUrls, labels=[${refLabels.join(',')}], apiType=${settings.apiType}`);
+    iigLog('INFO', `Refs: ${referenceImages.length} base64, ${referenceDataUrls.length} dataUrls, labels=[${refLabels.join(',')}], apiType=${settings.apiType}, limit=${maxRefs}`);
 
     let lastError;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -2780,6 +2844,20 @@ function createSettingsUI() {
 
                     <hr>
 
+                    <!-- Styles Section -->
+                    <div class="iig-section" id="iig_styles_section">
+                        <h4><i class="fa-solid fa-palette"></i> Стиль</h4>
+                        <div class="flex-row">
+                            <label for="iig_style_select">Активный стиль</label>
+                            <select id="iig_style_select" class="flex1"></select>
+                            <div id="iig_style_add" class="menu_button" title="Новый стиль"><i class="fa-solid fa-plus"></i></div>
+                        </div>
+                        <div id="iig_style_editor"></div>
+                        <p class="hint">Активный стиль заменяет style из тега. Картинка стиля уходит референсом в Gemini и Naistera.</p>
+                    </div>
+
+                    <hr>
+
                     <!-- References Section -->
                     <div id="iig_refs_section" class="iig-refs">
                         <h4><i class="fa-solid fa-user-group"></i> Референсы персонажей</h4>
@@ -2976,8 +3054,127 @@ function createSettingsUI() {
     }
 }
 
+function renderStyleSection() {
+    const settings = getSettings();
+    const select = document.getElementById('iig_style_select');
+    const editor = document.getElementById('iig_style_editor');
+    if (!select || !editor) return;
+    const styles = getStyles(settings);
+    const active = getActiveStyle(settings);
+
+    select.innerHTML = `<option value="">— Без стиля (из тега) —</option>` + styles.map(st =>
+        `<option value="${sanitizeForHtml(st.id)}" ${st.id === settings.activeStyleId ? 'selected' : ''}>${st.imagePath ? '🖼 ' : ''}${sanitizeForHtml(st.name)}</option>`
+    ).join('');
+
+    if (!active) { editor.innerHTML = ''; return; }
+    const preview = active.imagePath
+        ? `<img class="iig-style-image-preview" src="${sanitizeForHtml(active.imagePath)}" alt="">`
+        : `<div class="iig-style-image-preview iig-style-image-empty"><i class="fa-solid fa-image"></i></div>`;
+    editor.innerHTML = `
+        <div class="flex-row">
+            <label for="iig_style_name">Название</label>
+            <input type="text" id="iig_style_name" class="text_pole flex1" value="${sanitizeForHtml(active.name)}">
+        </div>
+        <textarea id="iig_style_value" class="text_pole" rows="4" placeholder="semi_realism, muted colors, soft lighting">${sanitizeForHtml(active.value)}</textarea>
+        <div class="iig-style-image-row">
+            ${preview}
+            <div class="iig-style-image-actions">
+                <label class="menu_button" title="Картинка-референс стиля">
+                    <i class="fa-solid fa-upload"></i> ${active.imagePath ? 'Заменить картинку' : 'Картинка стиля'}
+                    <input type="file" id="iig_style_image_file" accept="image/*" style="display:none">
+                </label>
+                ${active.imagePath ? '<div id="iig_style_image_remove" class="menu_button"><i class="fa-solid fa-xmark"></i> Убрать картинку</div>' : ''}
+                <div id="iig_style_delete" class="menu_button" style="color:#cc5555;"><i class="fa-solid fa-trash"></i> Удалить стиль</div>
+            </div>
+        </div>`;
+}
+
+function bindStyleEvents() {
+    const settings = getSettings();
+    const section = document.getElementById('iig_styles_section');
+    if (!section) return;
+
+    document.getElementById('iig_style_select')?.addEventListener('change', (e) => {
+        settings.activeStyleId = e.target.value;
+        saveSettings();
+        renderStyleSection();
+    });
+
+    document.getElementById('iig_style_add')?.addEventListener('click', () => {
+        const style = { id: makeStyleId(), name: `Стиль ${getStyles(settings).length + 1}`, value: '', imagePath: '' };
+        settings.styles.push(style);
+        settings.activeStyleId = style.id;
+        saveSettings();
+        renderStyleSection();
+        document.getElementById('iig_style_value')?.focus();
+    });
+
+    // Поля редактора пересоздаются при рендере, поэтому события ловим на секции.
+    section.addEventListener('input', (e) => {
+        const active = getActiveStyle(settings);
+        if (!active) return;
+        if (e.target.id === 'iig_style_name') {
+            active.name = e.target.value;
+            const option = document.querySelector(`#iig_style_select option[value="${CSS.escape(active.id)}"]`);
+            if (option) option.textContent = `${active.imagePath ? '🖼 ' : ''}${active.name || 'Стиль'}`;
+        } else if (e.target.id === 'iig_style_value') {
+            active.value = e.target.value;
+        } else {
+            return;
+        }
+        saveSettings();
+    });
+
+    section.addEventListener('change', async (e) => {
+        if (e.target.id !== 'iig_style_image_file') return;
+        const active = getActiveStyle(settings);
+        const file = e.target.files?.[0];
+        if (!active || !file) return;
+        try {
+            const rawBase64 = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result.split(',')[1]);
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+            const compressed = await compressBase64Image(rawBase64, 1024, 0.85);
+            active.imagePath = await saveRefImageToFile(compressed, `style_${active.name}`);
+            saveSettings();
+            renderStyleSection();
+            toastr.success(`Картинка стиля «${active.name}» сохранена`, 'Генерация картинок', { timeOut: 2000 });
+        } catch (err) {
+            iigLog('ERROR', 'Style image upload failed:', err.message);
+            toastr.error(`Не удалось загрузить картинку: ${err.message}`, 'Генерация картинок');
+        }
+        e.target.value = '';
+    });
+
+    section.addEventListener('click', async (e) => {
+        const active = getActiveStyle(settings);
+        if (!active) return;
+        if (e.target.closest('#iig_style_image_remove')) {
+            active.imagePath = '';
+            saveSettings();
+            renderStyleSection();
+        } else if (e.target.closest('#iig_style_delete')) {
+            const popup = SillyTavern.getContext().Popup;
+            const ok = typeof popup?.show?.confirm === 'function'
+                ? await popup.show.confirm('Удалить стиль?', `«${active.name}» будет удалён.`)
+                : window.confirm(`Удалить стиль «${active.name}»?`);
+            if (!ok) return;
+            settings.styles = settings.styles.filter(st => st.id !== active.id);
+            settings.activeStyleId = '';
+            saveSettings();
+            renderStyleSection();
+        }
+    });
+
+    renderStyleSection();
+}
+
 function bindSettingsEvents() {
     const settings = getSettings();
+    bindStyleEvents();
 
     const updateVisibility = () => {
         const apiType = settings.apiType;

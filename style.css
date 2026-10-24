@@ -2076,3 +2076,14 @@
     background: rgba(232,96,122,0.08); color: #e8607a; cursor: pointer; transition: all 0.15s;
 }
 .vw-tags-add:hover { background: rgba(232,96,122,0.16); border-style: solid; }
+
+/* ── Стили: картинка-референс ── */
+#iig_style_editor { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+#iig_style_value { width: 100%; resize: vertical; }
+.iig-style-image-row { display: flex; align-items: center; gap: 10px; }
+.iig-style-image-preview {
+    width: 72px; height: 72px; flex: 0 0 72px;
+    border: 1px solid var(--SmartThemeBorderColor); border-radius: 8px; object-fit: cover;
+}
+.iig-style-image-empty { display: flex; align-items: center; justify-content: center; opacity: 0.45; }
+.iig-style-image-actions { display: flex; flex-wrap: wrap; gap: 6px; }
