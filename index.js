@@ -191,6 +191,17 @@
         saveSettings();
         return t;
     }
+    // Тег из каталога: если такого id у пользователя нет — добавляется с подписью и иконкой каталога.
+    function swEnsureType(cat) {
+        if (!cat?.id) return SW_FALLBACK_TYPE;
+        const s = getSettings();
+        if (s.outfitTypes.some(x => x.id === cat.id)) return cat.id;
+        const t = { id: cat.id, label: cat.label || cat.id, icon: cat.icon || 'fa-tag' };
+        const fi = s.outfitTypes.findIndex(x => x.id === SW_FALLBACK_TYPE); // «Другое» держим последним
+        if (fi >= 0) s.outfitTypes.splice(fi, 0, t); else s.outfitTypes.push(t);
+        saveSettings();
+        return t.id;
+    }
     function swRenameType(id, label) { const t = swTypes().find(x => x.id === id); if (t) { t.label = label; saveSettings(); } }
     function swSetTypeIcon(id, icon) { const t = swTypes().find(x => x.id === id); if (t) { t.icon = icon; saveSettings(); } }
     function swDeleteType(id) {
@@ -411,7 +422,7 @@
             if (!iig) continue;
             addRef(iig.charRef?.imagePath);
             addRef(iig.userRef?.imagePath);
-            for (const n of (iig.npcReferences || [])) addRef(n?.imagePath);
+            for (const n of (iig.npcReferences || [])) { addRef(n?.imagePath); addRef(n?.outfit?.imagePath); }
             for (const st of (Array.isArray(iig.styles) ? iig.styles : [])) addRef(st?.imagePath);
         }
         return { referenced, dir };
@@ -928,6 +939,18 @@
 
     const SW_PROMPT_KEY = 'sillywardrobe_outfit';
 
+    // НПС с нарядом, чьё имя встречалось в последних сообщениях чата.
+    const SW_NPC_SCENE_DEPTH = 6;
+    function swNpcsInScene() {
+        const ctx = SillyTavern.getContext();
+        const npcs = (ctx.extensionSettings?.vish_image_gen?.npcReferences || [])
+            .filter(n => n && n.enabled !== false && n.name && n.outfit?.description);
+        if (!npcs.length) return [];
+        const recent = (ctx.chat || []).slice(-SW_NPC_SCENE_DEPTH).map(m => m?.mes || '').join('\n').toLowerCase();
+        return npcs.filter(n => n.name.trim().split(/\s+/).filter(w => w.length > 2)
+            .some(w => recent.includes(w.toLowerCase())));
+    }
+
     function swUpdatePromptInjection() {
         try {
             const ctx = SillyTavern.getContext();
@@ -940,13 +963,10 @@
             // а общий гардероб юзера может работать и без выбранного персонажа.
             const botData = cn ? swGetActiveSideOutfit('bot') : null;
             const userData = swGetActiveSideOutfit('user');
-            if (!botData && !userData) {
-                ctx.setExtensionPrompt(SW_PROMPT_KEY, '', 1, 1);
-                return;
-            }
             const lines = [];
             if (botData?.description) lines.push(`[${cn || 'Персонаж'} сейчас одет(а): ${botData.description}]`);
             if (userData?.description) lines.push(`[{{user}} сейчас одет(а): ${userData.description}]`);
+            for (const npc of swNpcsInScene()) lines.push(`[${npc.name} сейчас одет(а): ${npc.outfit.description}]`);
             const injectionText = lines.length > 0 ? lines.join('\n') : '';
             // position 1 = IN_CHAT, depth 1 = before last message (like Author's Note)
             ctx.setExtensionPrompt(SW_PROMPT_KEY, injectionText, 1, 1);
@@ -997,7 +1017,7 @@
         // Типы одежды (редактируемые)
         types: swTypes, typeIds: swTypeIds, typeOf: swTypeOf, typeMeta: swTypeMeta,
         TYPE_ICONS: SW_TYPE_ICONS, FALLBACK_TYPE: SW_FALLBACK_TYPE,
-        addType: swAddType, renameType: swRenameType, setTypeIcon: swSetTypeIcon, deleteType: swDeleteType,
+        addType: swAddType, ensureType: swEnsureType, renameType: swRenameType, setTypeIcon: swSetTypeIcon, deleteType: swDeleteType,
         imgSrc: swImgSrc,
         viewForSide: swViewForSide,
         isShared: (side) => swSharedCfg(side).use(),
@@ -1514,11 +1534,13 @@ function matchNpcReferences(prompt, npcList) {
     const lowerPrompt = prompt.toLowerCase();
     const matched = [];
     for (const npc of npcList) {
-        if (!npc || npc.enabled === false || !npc.name || (!npc.imagePath && !npc.imageBase64)) continue;
+        const hasFace = !!(npc?.imagePath || npc?.imageBase64);
+        const hasOutfit = !!(npc?.outfit?.imagePath || npc?.outfit?.description);
+        if (!npc || npc.enabled === false || !npc.name || (!hasFace && !hasOutfit)) continue;
         const words = npc.name.trim().split(/\s+/).filter(w => w.length > 2);
         if (words.length === 0) continue;
         if (words.some(word => lowerPrompt.includes(word.toLowerCase()))) {
-            matched.push({ name: npc.name, imageBase64: npc.imageBase64, imagePath: npc.imagePath });
+            matched.push({ name: npc.name, imageBase64: npc.imageBase64, imagePath: npc.imagePath, outfit: npc.outfit || null });
         }
     }
     return matched;
@@ -1843,13 +1865,16 @@ async function generateImageGemini(prompt, style, referenceImages = [], options 
     const sliced = referenceImages.slice(0, getMaxReferenceImages(settings));
     for (let i = 0; i < sliced.length; i++) {
         const label = refLabels[i] || 'reference';
-        parts.push({ text: labelMap[label] || '⬇️ REFERENCE IMAGE:' });
+        let labelText = labelMap[label] || '⬇️ REFERENCE IMAGE:';
+        if (label.startsWith('npc_face:')) labelText = `⬇️ ${label.slice(9).toUpperCase()} FACE REFERENCE — copy this face exactly:`;
+        else if (label.startsWith('npc_outfit:')) labelText = `⬇️ ${label.slice(11).toUpperCase()} OUTFIT REFERENCE — ${label.slice(11)} must wear exactly this clothing:`;
+        parts.push({ text: labelText });
         parts.push({ inlineData: { mimeType: 'image/jpeg', data: sliced[i] } });
     }
 
     // Build dynamic instruction block based on what refs are actually present
-    const hasFaces   = refLabels.some(l => l.endsWith('_face'));
-    const hasOutfits = refLabels.some(l => l.endsWith('_outfit'));
+    const hasFaces   = refLabels.some(l => l.endsWith('_face') || l.startsWith('npc_face:'));
+    const hasOutfits = refLabels.some(l => l.endsWith('_outfit') || l.startsWith('npc_outfit:'));
     const hasContext = refLabels.includes('context');
     const hasStyleRef = refLabels.includes('style');
 
@@ -2091,20 +2116,31 @@ async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {
     }
 
     // ── NPC refs ──────────────────────────────────────────────────
-    const currentCount = isNaisteraType ? referenceDataUrls.length : referenceImages.length;
-    if (currentCount < maxRefs) {
-        const matchedNpcs = matchNpcReferences(prompt, refs.npcReferences || []);
-        for (const npc of matchedNpcs) {
-            if ((isNaisteraType ? referenceDataUrls.length : referenceImages.length) >= maxRefs) break;
+    const matchedNpcs = matchNpcReferences(prompt, refs.npcReferences || []);
+    const refCount = () => (isNaisteraType ? referenceDataUrls.length : referenceImages.length);
+    for (const npc of matchedNpcs) {
+        // Лицо НПС, затем его наряд — каждый в пределах лимита модели.
+        if (refCount() < maxRefs && (npc.imagePath || npc.imageBase64)) {
             if (isNaisteraType) {
                 const url = await getDataUrl(npc);
                 if (url) { referenceDataUrls.push(url); iigLog('INFO', `NPC (naistera): ${npc.name}`); }
             } else {
                 const b64 = npc.imagePath ? await loadRefImageAsBase64(npc.imagePath) : npc.imageBase64;
-                if (b64) { referenceImages.push(b64); refLabels.push('reference'); iigLog('INFO', `NPC: ${npc.name}`); }
+                if (b64) { referenceImages.push(b64); refLabels.push(`npc_face:${npc.name}`); iigLog('INFO', `NPC: ${npc.name}`); }
             }
         }
+        if (refCount() < maxRefs && npc.outfit?.imagePath && (isGeminiType || isNaisteraType)) {
+            const b64 = await loadRefImageAsBase64(npc.outfit.imagePath);
+            if (b64 && isNaisteraType) {
+                referenceDataUrls.push('data:image/jpeg;base64,' + b64);
+            } else if (b64) {
+                referenceImages.push(b64); refLabels.push(`npc_outfit:${npc.name}`);
+            }
+            if (b64) iigLog('INFO', `NPC outfit: ${npc.name} — "${npc.outfit.name}"`);
+        }
     }
+    const npcOutfitLines = matchedNpcs.filter(n => n.outfit?.description).map(n => `[${n.name} is wearing: ${n.outfit.description}]`);
+    if (npcOutfitLines.length) prompt = `${npcOutfitLines.join(' ')}\n${prompt}`;
 
     iigLog('INFO', `Refs: ${referenceImages.length} base64, ${referenceDataUrls.length} dataUrls, labels=[${refLabels.join(',')}], apiType=${settings.apiType}, limit=${maxRefs}`);
 
@@ -4364,7 +4400,25 @@ async function warnIfSillyimagesActive() {
     let vwCatalogFilter = 'all';
     let vwCatalogQuery = '';
     let vwCatalogPage = 0;
-    const vwCatalogBusy = new Set(); // `${side}:${itemId}` — идёт импорт
+    const vwCatalogBusy = new Set(); // `${target}:${itemId}` — идёт импорт
+    let vwCatalogSheetId = null;     // вещь, для которой открыт выбор «куда»
+    // Если в index.json нет списка категорий (старый каталог) — этот же список, что у бота.
+    const VW_CATALOG_DEFAULT_CATEGORIES = [
+        { id: 'casual', label: 'Повседневное', icon: 'fa-shirt' },
+        { id: 'home', label: 'Домашнее', icon: 'fa-house' },
+        { id: 'formal', label: 'Формальное', icon: 'fa-gem' },
+        { id: 'sport', label: 'Спортивное', icon: 'fa-person-running' },
+        { id: 'sleep', label: 'Спальное', icon: 'fa-bed' },
+        { id: 'underwear', label: 'Бельё', icon: 'fa-heart' },
+        { id: 'work', label: 'Работа', icon: 'fa-briefcase' },
+        { id: 'beach', label: 'Пляжное', icon: 'fa-umbrella-beach' },
+        { id: 'outer', label: 'Верхняя', icon: 'fa-mitten' },
+        { id: 'vintage', label: 'Винтаж', icon: 'fa-record-vinyl' },
+        { id: 'historical', label: 'Исторические', icon: 'fa-chess-queen' },
+        { id: 'fantasy', label: 'Фэнтези', icon: 'fa-wand-magic-sparkles' },
+        { id: 'wedding', label: 'Свадебные', icon: 'fa-ring' },
+        { id: 'other', label: 'Другое', icon: 'fa-tag' },
+    ];
     let vwSubTab   = 'bot';       // 'bot' | 'user'
     let vwView     = 'grid';      // 'grid' | 'list'
     let vwNpcView  = 'grid';
@@ -4580,6 +4634,8 @@ async function warnIfSillyimagesActive() {
 
     function vwClose() {
         vwOpen = false;
+        vwCatalogSheetId = null;
+        document.querySelector('.vw-sheet-backdrop')?.remove();
         const ov = document.getElementById('vw-overlay');
         ov?.remove();
         document.removeEventListener('keydown', vwEsc);
@@ -4678,6 +4734,7 @@ async function warnIfSillyimagesActive() {
     function vwRenderBody(panel) {
         const body = document.getElementById('vw-body');
         if (!body) return;
+        if (vwMainTab !== 'catalog') { vwCatalogSheetId = null; document.querySelector('.vw-sheet-backdrop')?.remove(); }
         if (vwMainTab === 'wardrobe') vwRenderWardrobe(body, panel);
         else if (vwMainTab === 'npc') vwRenderNpc(body, panel);
         else if (vwMainTab === 'catalog') vwRenderCatalog(body, panel);
@@ -4844,9 +4901,20 @@ async function warnIfSillyimagesActive() {
         return ids;
     }
 
-    function vwCatalogTypeOf(item) {
-        const ids = vwTypes().map(t => t.id);
-        return ids.includes(item?.type) ? item.type : (swc()?.FALLBACK_TYPE || 'other');
+    function vwCatalogCategories() {
+        const fromIndex = vwCatalog.index?.categories;
+        const valid = Array.isArray(fromIndex) && fromIndex.filter(c => c && typeof c.id === 'string' && c.id);
+        return valid && valid.length ? valid : VW_CATALOG_DEFAULT_CATEGORIES;
+    }
+    function vwCatalogCategory(item) {
+        const cats = vwCatalogCategories();
+        return cats.find(c => c.id === item?.type) || cats.find(c => c.id === 'other') || { id: 'other', label: 'Другое', icon: 'fa-tag' };
+    }
+    function vwCatalogTypeOf(item) { return vwCatalogCategory(item).id; }
+
+    // НПС, на которых сейчас надета эта вещь каталога.
+    function vwNpcsWearing(itemId) {
+        return (vwIIGData().npcReferences || []).filter(n => n?.outfit?.catalogId === itemId);
     }
 
     function vwRenderCatalog(body, panel) {
@@ -4872,9 +4940,9 @@ async function warnIfSillyimagesActive() {
 
         if (items.length) {
             html += `<div class="vw-filter-row"><button class="vw-filter-chip ${vwCatalogFilter === 'all' ? 'vw-filter-on' : ''}" data-ctype="all">Все <span class="vw-chip-count">${items.length}</span></button>`;
-            for (const t of vwTypes()) {
+            for (const t of vwCatalogCategories()) {
                 if (!counts[t.id]) continue;
-                html += `<button class="vw-filter-chip ${vwCatalogFilter === t.id ? 'vw-filter-on' : ''}" data-ctype="${t.id}"><i class="fa-solid ${t.icon}"></i> ${san(t.label)} <span class="vw-chip-count">${counts[t.id]}</span></button>`;
+                html += `<button class="vw-filter-chip ${vwCatalogFilter === t.id ? 'vw-filter-on' : ''}" data-ctype="${san(t.id)}"><i class="fa-solid ${san(t.icon || 'fa-tag')}"></i> ${san(t.label || t.id)} <span class="vw-chip-count">${counts[t.id]}</span></button>`;
             }
             html += '</div>';
         }
@@ -4890,23 +4958,25 @@ async function warnIfSillyimagesActive() {
         } else {
             html += '<div class="vw-outfit-grid">';
             for (const it of pageItems) {
-                const tm = swc()?.typeMeta ? swc().typeMeta(vwCatalogTypeOf(it)) : { icon: 'fa-tag', label: 'Другое' };
-                const sideBtn = (side, label, icon) => {
-                    const has = imported[side].has(it.id);
-                    const busy = vwCatalogBusy.has(`${side}:${it.id}`);
-                    return `<button class="vw-catalog-take ${has ? 'vw-catalog-has' : ''}" data-side="${side}" data-id="${san(it.id)}" ${busy ? 'disabled' : ''}
-                        title="${has ? `Уже в гардеробе ${label === 'Чар' ? 'Чара' : 'Юзера'} — добавить ещё раз` : `В гардероб ${label === 'Чар' ? 'Чара' : 'Юзера'}`}">
-                        <i class="fa-solid ${busy ? 'fa-spinner fa-spin' : has ? 'fa-check' : icon}"></i> ${label}</button>`;
-                };
+                const cat = vwCatalogCategory(it);
+                const marks = [];
+                if (imported.user.has(it.id)) marks.push('<span title="В гардеробе Юзера"><i class="fa-solid fa-user"></i></span>');
+                if (imported.bot.has(it.id)) marks.push('<span title="В гардеробе персонажа"><i class="fa-solid fa-robot"></i></span>');
+                for (const n of vwNpcsWearing(it.id)) marks.push(`<span title="Надето на НПС">${san(n.name)}</span>`);
+                const busy = [...vwCatalogBusy].some(k => k.endsWith(`:${it.id}`));
                 html += `<div class="vw-card vw-catalog-card" data-id="${san(it.id)}">
                     <div class="vw-card-img-wrap">
                         <img src="${san(VW_CATALOG_BASE + (it.thumb || it.image || ''))}" class="vw-card-img" alt="${san(it.name)}" loading="lazy">
-                        <div class="vw-type-badge" title="${san(tm.label)}"><i class="fa-solid ${tm.icon}"></i></div>
+                        <div class="vw-type-badge" title="${san(cat.label)}"><i class="fa-solid ${san(cat.icon || 'fa-tag')}"></i></div>
+                        ${marks.length ? `<div class="vw-catalog-marks">${marks.join('')}</div>` : ''}
                     </div>
                     <div class="vw-card-foot">
                         <span class="vw-card-name" title="${san(it.description || it.name)}">${san(it.name)}</span>
                     </div>
-                    <div class="vw-catalog-actions">${sideBtn('bot', 'Чар', 'fa-robot')}${sideBtn('user', 'Юзер', 'fa-user')}</div>
+                    <div class="vw-catalog-actions">
+                        <button class="vw-catalog-take" data-id="${san(it.id)}" ${busy ? 'disabled' : ''}>
+                            <i class="fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-plus'}"></i> ${busy ? 'Добавляю…' : 'Добавить'}</button>
+                    </div>
                 </div>`;
             }
             html += '</div>';
@@ -4943,9 +5013,14 @@ async function warnIfSillyimagesActive() {
         for (const b of body.querySelectorAll('.vw-catalog-take'))
             b.addEventListener('click', (e) => {
                 e.stopPropagation();
-                const item = items.find(it => it.id === b.dataset.id);
-                if (item) vwImportCatalogItem(item, b.dataset.side, panel);
+                vwCatalogSheetId = b.dataset.id;
+                vwRenderBody(panel);
             });
+
+        document.querySelector('.vw-sheet-backdrop')?.remove();
+        const sheetItem = vwCatalogSheetId && items.find(it => it.id === vwCatalogSheetId);
+        if (sheetItem) vwRenderCatalogSheet(body, panel, sheetItem, imported);
+        else vwCatalogSheetId = null;
 
         // Каталог мог обновиться, пока панель была закрыта.
         if (vwCatalog.index && !vwCatalog.loading && !vwCatalog.error && Date.now() - vwCatalog.loadedAt > 5 * 60_000) vwLoadCatalog(panel);
@@ -4968,38 +5043,110 @@ async function warnIfSillyimagesActive() {
         return canvas.toDataURL('image/jpeg', 0.88).split(',')[1];
     }
 
-    async function vwImportCatalogItem(item, side, panel) {
-        const key = `${side}:${item.id}`;
+    // Лист выбора: Юзер / персонаж — «В гардероб» или «Надеть»; НПС — «Надеть».
+    function vwRenderCatalogSheet(body, panel, item, imported) {
+        const cn = vwCharName();
+        const sideRow = (side, icon, title) => {
+            const view = swc()?.viewForSide ? swc().viewForSide(side) : null;
+            const blocked = !view || (!view.shared && !cn);
+            const where = view?.shared ? 'общий гардероб' : (side === 'bot' ? 'гардероб персонажа' : 'личный гардероб');
+            const has = imported[side].has(item.id);
+            return `<div class="vw-sheet-row">
+                <div class="vw-sheet-who"><i class="fa-solid ${icon}"></i><div><b>${san(title)}</b><small>${blocked ? 'выбери персонажа или включи «Общий»' : where}${has ? ' · уже есть' : ''}</small></div></div>
+                <div class="vw-sheet-btns">
+                    <button class="vw-sheet-btn" data-target="${side}" data-wear="0" ${blocked ? 'disabled' : ''}><i class="fa-solid fa-box-archive"></i> В гардероб</button>
+                    <button class="vw-sheet-btn vw-sheet-main" data-target="${side}" data-wear="1" ${blocked ? 'disabled' : ''}><i class="fa-solid fa-shirt"></i> Надеть</button>
+                </div>
+            </div>`;
+        };
+        const npcs = vwIIGData().npcReferences || [];
+        const npcRows = npcs.length ? npcs.map((n, i) => {
+            const wearingThis = n.outfit?.catalogId === item.id;
+            return `<div class="vw-sheet-row">
+                <div class="vw-sheet-who"><i class="fa-solid fa-user-group"></i><div><b>${san(n.name)}</b><small>${n.outfit ? `сейчас: ${san(n.outfit.name || 'наряд')}` : 'без наряда'}</small></div></div>
+                <div class="vw-sheet-btns">
+                    <button class="vw-sheet-btn vw-sheet-main" data-target="npc:${i}" data-wear="1" ${wearingThis ? 'disabled' : ''}><i class="fa-solid ${wearingThis ? 'fa-check' : 'fa-shirt'}"></i> ${wearingThis ? 'Надето' : 'Надеть'}</button>
+                </div>
+            </div>`;
+        }).join('') : '<div class="vw-sheet-empty">НПС пока нет — их добавляют во вкладке «НПС»</div>';
+
+        const sheet = document.createElement('div');
+        sheet.className = 'vw-sheet-backdrop';
+        sheet.innerHTML = `<div class="vw-sheet">
+            <div class="vw-sheet-head">
+                <img src="${san(VW_CATALOG_BASE + (item.thumb || item.image || ''))}" alt="">
+                <div class="vw-sheet-title"><b>${san(item.name)}</b><small>${san(vwCatalogCategory(item).label)}</small>
+                    ${item.description ? `<p>${san(item.description)}</p>` : ''}</div>
+                <button class="vw-ic-btn vw-sheet-close" title="Закрыть"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="vw-sheet-section">Куда добавить</div>
+            ${sideRow('user', 'fa-user', 'Юзер')}
+            ${sideRow('bot', 'fa-robot', cn || 'Персонаж')}
+            <div class="vw-sheet-section">НПС</div>
+            ${npcRows}
+        </div>`;
+        // Рядом с панелью, на <html>: у body в ST position: fixed, и внутри него лист оказался бы под панелью.
+        document.documentElement.appendChild(sheet);
+
+        const close = () => { vwCatalogSheetId = null; sheet.remove(); vwRenderBody(panel); };
+        sheet.addEventListener('click', (e) => { if (e.target === sheet) close(); });
+        sheet.querySelector('.vw-sheet-close').addEventListener('click', close);
+        for (const b of sheet.querySelectorAll('.vw-sheet-btn'))
+            b.addEventListener('click', () => {
+                vwCatalogSheetId = null;
+                sheet.remove();
+                vwImportCatalogItem(item, b.dataset.target, b.dataset.wear === '1', panel);
+            });
+    }
+
+    async function vwImportCatalogItem(item, target, wear, panel) {
+        const key = `${target}:${item.id}`;
         if (vwCatalogBusy.has(key)) return;
-        const view = swc()?.viewForSide ? swc().viewForSide(side) : null;
-        if (!view) { toastr.error('Гардероб ещё не загрузился', 'Каталог'); return; }
-        if (!view.shared && !vwCharName()) {
+        const isNpc = target.startsWith('npc:');
+        const view = !isNpc && swc()?.viewForSide ? swc().viewForSide(target) : null;
+        if (!isNpc && !view) { toastr.error('Гардероб ещё не загрузился', 'Каталог'); return; }
+        if (view && !view.shared && !vwCharName()) {
             toastr.warning('Выбери персонажа или включи «Общий» гардероб', 'Каталог');
             return;
         }
-        const sideName = side === 'bot' ? 'Чара' : 'Юзера';
         vwCatalogBusy.add(key);
         vwRenderBody(panel);
         try {
             const base64 = await vwCatalogImageBase64(VW_CATALOG_BASE + item.image, swc()?.maxDim ? swc().maxDim() : 768);
-            const newItem = {
-                id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
-                name: item.name || 'Без имени',
-                type: vwCatalogTypeOf(item),
-                description: item.description || '',
-                addedAt: Date.now(),
-                catalogId: item.id,
-            };
-            if (view.shared && swc()?.saveFile) {
-                try { newItem.imagePath = await swc().saveFile(base64, (side === 'bot' ? 'sw_bot_' : 'sw_user_') + newItem.name); }
-                catch (err) { console.warn('[vw] catalog file store failed, fallback base64:', err.message); }
+            const cat = vwCatalogCategory(item);
+            if (isNpc) {
+                const npc = vwIIGData().npcReferences?.[+target.slice(4)];
+                if (!npc) throw new Error('НПС не найден');
+                const imagePath = swc()?.saveFile ? await swc().saveFile(base64, `npc_outfit_${npc.name}`) : '';
+                if (!imagePath) throw new Error('не удалось сохранить картинку');
+                npc.outfit = { name: item.name || 'Наряд', description: item.description || '', imagePath, catalogId: item.id };
+                vwSaveAndSync();
+                toastr.success(`${npc.name} теперь в «${npc.outfit.name}»`, 'Каталог', { timeOut: 2500 });
+            } else {
+                const newItem = {
+                    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+                    name: item.name || 'Без имени',
+                    // категория каталога появляется среди тегов гардероба, если её не было
+                    type: swc()?.ensureType ? swc().ensureType(cat) : cat.id,
+                    description: item.description || '',
+                    addedAt: Date.now(),
+                    catalogId: item.id,
+                };
+                if (view.shared && swc()?.saveFile) {
+                    try { newItem.imagePath = await swc().saveFile(base64, (target === 'bot' ? 'sw_bot_' : 'sw_user_') + newItem.name); }
+                    catch (err) { console.warn('[vw] catalog file store failed, fallback base64:', err.message); }
+                }
+                if (!newItem.imagePath) newItem.base64 = base64;
+                view.add(newItem);
+                if (wear) { newItem.lastWorn = Date.now(); view.setActive(newItem.id); }
+                if (view.shared && swc()?.preloadSharedActive) swc().preloadSharedActive(target);
+                vwSaveAndSync();
+                vwRefreshBtn();
+                const whoName = target === 'bot' ? (vwCharName() || 'персонажа') : 'Юзера';
+                toastr.success(wear ? `«${newItem.name}» надето на ${whoName}` : `«${newItem.name}» в гардеробе ${target === 'bot' ? 'персонажа' : 'Юзера'}`,
+                    'Каталог', { timeOut: 2500 });
             }
-            if (!newItem.imagePath) newItem.base64 = base64;
-            view.add(newItem);
-            if (view.shared && swc()?.preloadSharedActive) swc().preloadSharedActive(side);
-            vwSaveAndSync();
-            vwRefreshBtn();
-            toastr.success(`«${newItem.name}» добавлено в гардероб ${sideName}`, 'Каталог', { timeOut: 2500 });
+            if (window.sillyWardrobe?.updatePromptInjection) window.sillyWardrobe.updatePromptInjection();
         } catch (e) {
             toastr.error(`Не удалось добавить: ${e.message}`, 'Каталог');
         } finally {
@@ -5403,6 +5550,11 @@ async function warnIfSillyimagesActive() {
                             <i class="fa-solid ${on ? 'fa-toggle-on' : 'fa-toggle-off'}"></i>
                         </button>
                     </div>
+                    ${n.outfit ? `<div class="vw-npc-outfit" title="${san(n.outfit.description || '')}">
+                        ${n.outfit.imagePath ? `<img src="${san(n.outfit.imagePath)}" alt="">` : '<i class="fa-solid fa-shirt"></i>'}
+                        <span>${san(n.outfit.name || 'Наряд')}</span>
+                        <button class="vw-ic-btn vw-npc-unwear" data-idx="${i}" title="Снять наряд"><i class="fa-solid fa-xmark"></i></button>
+                    </div>` : ''}
                     <div class="vw-npc-foot">
                         <span class="vw-npc-name">${san(n.name)}</span>
                         <div class="vw-npc-btns">
@@ -5426,9 +5578,10 @@ async function warnIfSillyimagesActive() {
                     <div class="vw-row-thumb-wrap">
                         ${imgSrc ? `<img src="${imgSrc}" class="vw-row-thumb" alt="${san(n.name)}" loading="lazy">` : `<div class="vw-row-thumb vw-npc-no-img"><i class="fa-solid fa-user"></i></div>`}
                     </div>
-                    <div class="vw-row-info"><span class="vw-row-name">${san(n.name)}</span></div>
+                    <div class="vw-row-info"><span class="vw-row-name">${san(n.name)}</span>${n.outfit ? `<span class="vw-row-desc"><i class="fa-solid fa-shirt"></i> ${san(n.outfit.name || 'Наряд')}</span>` : ''}</div>
                     <div class="vw-row-btns">
                         <button class="vw-ic-btn vw-npc-list-toggle ${on ? 'vw-green' : ''}" data-idx="${i}" title="${on ? 'Выключить' : 'Включить'}"><i class="fa-solid ${on ? 'fa-toggle-on' : 'fa-toggle-off'}"></i></button>
+                        ${n.outfit ? `<button class="vw-ic-btn vw-npc-unwear" data-idx="${i}" title="Снять наряд"><i class="fa-solid fa-shirt"></i></button>` : ''}
                         <label class="vw-ic-btn vw-npc-up" title="Загрузить фото"><i class="fa-solid fa-image"></i><input type="file" accept="image/*" style="display:none" class="vw-npc-file" data-idx="${i}"></label>
                         <button class="vw-ic-btn vw-npc-del" data-idx="${i}" title="Удалить"><i class="fa-solid fa-trash-can"></i></button>
                     </div>
@@ -5446,6 +5599,19 @@ async function warnIfSillyimagesActive() {
                 if (!d2.npcReferences?.[idx]) return;
                 d2.npcReferences[idx].enabled = !(d2.npcReferences[idx].enabled !== false);
                 vwSaveAndSync(); vwRenderNpc(body, panel); vwRefreshBtn();
+            });
+
+        for (const btn of body.querySelectorAll('.vw-npc-unwear'))
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const d2 = vwIIGData(); const npc = d2.npcReferences?.[+btn.dataset.idx];
+                if (!npc?.outfit) return;
+                const name = npc.outfit.name || 'наряд';
+                delete npc.outfit; // файл остаётся до «Чистки файлов»
+                vwSaveAndSync();
+                if (window.sillyWardrobe?.updatePromptInjection) window.sillyWardrobe.updatePromptInjection();
+                toastr.info(`С «${npc.name}» снято: ${name}`, 'НПС', { timeOut: 2000 });
+                vwRenderNpc(body, panel);
             });
 
         for (const fi of body.querySelectorAll('.vw-npc-file'))

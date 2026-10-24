@@ -2337,11 +2337,78 @@
 .vw-catalog-card { cursor: default; }
 .vw-catalog-actions { display: flex; gap: 6px; padding: 0 8px 8px; }
 .vw-catalog-take {
-    flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 5px;
-    padding: 5px 4px; font-size: 11px; border-radius: 8px; cursor: pointer;
-    border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.04);
+    flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 6px 4px; font-size: 11.5px; border-radius: 8px; cursor: pointer;
+    border: 1px solid rgba(232,96,122,0.35); background: rgba(232,96,122,0.1);
     color: var(--SmartThemeBodyColor); transition: all 0.15s;
 }
-.vw-catalog-take:hover { border-color: rgba(232,96,122,0.45); background: rgba(232,96,122,0.12); }
-.vw-catalog-take.vw-catalog-has { color: #e8607a; border-color: rgba(232,96,122,0.35); }
+.vw-catalog-take:hover { background: rgba(232,96,122,0.2); border-color: rgba(232,96,122,0.6); }
 .vw-catalog-take[disabled] { opacity: 0.6; cursor: wait; }
+.vw-catalog-marks {
+    position: absolute; left: 6px; bottom: 6px; right: 6px;
+    display: flex; flex-wrap: wrap; gap: 4px; pointer-events: none;
+}
+.vw-catalog-marks span {
+    display: inline-flex; align-items: center; gap: 3px; max-width: 100%;
+    padding: 2px 6px; font-size: 10px; border-radius: 999px;
+    background: rgba(0,0,0,0.6); color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Оверлеи висят на <html>, вне body, и сами не получают шрифт и цвет темы. */
+#vw-overlay, #qs-overlay, .vw-sheet-backdrop {
+    font-family: var(--mainFontFamily, sans-serif);
+    color: var(--SmartThemeBodyColor);
+}
+
+/* Лист «куда добавить» */
+.vw-sheet-backdrop {
+    /* Размеры явно: у <html> в некоторых темах есть transform, и inset: 0 растянул бы лист по нему. */
+    position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; height: 100dvh; z-index: 100000;
+    display: flex; align-items: flex-end; justify-content: center;
+    background: rgba(0,0,0,0.45);
+}
+.vw-sheet {
+    width: min(460px, 100%); max-height: 85vh; overflow-y: auto;
+    padding: 14px 14px 18px; border-radius: 16px 16px 0 0;
+    background: var(--SmartThemeBlurTintColor, #1d1d24); border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 -10px 40px rgba(0,0,0,0.45);
+    display: flex; flex-direction: column; gap: 8px;
+}
+@media (min-width: 700px) {
+    .vw-sheet-backdrop { align-items: center; }
+    .vw-sheet { border-radius: 16px; }
+}
+.vw-sheet-head { display: flex; gap: 10px; align-items: flex-start; }
+.vw-sheet-head img { width: 64px; height: 84px; object-fit: cover; border-radius: 8px; flex: 0 0 64px; background: rgba(0,0,0,0.2); }
+.vw-sheet-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.vw-sheet-title small { opacity: 0.6; font-size: 11px; }
+.vw-sheet-title p { margin: 4px 0 0; font-size: 11.5px; opacity: 0.8; line-height: 1.35; max-height: 4.1em; overflow: hidden; }
+.vw-sheet-section { margin-top: 6px; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.55; }
+.vw-sheet-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+    padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.07); background: rgba(255,255,255,0.03);
+}
+.vw-sheet-who { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.vw-sheet-who > i { width: 18px; text-align: center; opacity: 0.75; }
+.vw-sheet-who div { display: flex; flex-direction: column; min-width: 0; }
+.vw-sheet-who small { opacity: 0.55; font-size: 10.5px; }
+.vw-sheet-btns { display: flex; gap: 6px; margin-left: auto; }
+.vw-sheet-btn {
+    display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px; font-size: 11.5px;
+    border-radius: 8px; cursor: pointer; white-space: nowrap;
+    border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.04); color: var(--SmartThemeBodyColor);
+}
+.vw-sheet-btn:hover:not([disabled]) { border-color: rgba(232,96,122,0.5); }
+.vw-sheet-btn.vw-sheet-main { background: rgba(232,96,122,0.16); border-color: rgba(232,96,122,0.45); }
+.vw-sheet-btn[disabled] { opacity: 0.45; cursor: default; }
+.vw-sheet-empty { font-size: 11.5px; opacity: 0.55; padding: 4px 2px; }
+
+/* Наряд НПС */
+.vw-npc-outfit {
+    display: flex; align-items: center; gap: 6px; margin: 6px 8px 0;
+    padding: 4px 4px 4px 6px; border-radius: 8px; font-size: 11px;
+    background: rgba(232,96,122,0.1); border: 1px solid rgba(232,96,122,0.25);
+}
+.vw-npc-outfit img { width: 22px; height: 28px; object-fit: cover; border-radius: 4px; }
+.vw-npc-outfit span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vw-npc-outfit .vw-ic-btn { width: 22px; height: 22px; }
