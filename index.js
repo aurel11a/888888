@@ -6011,7 +6011,7 @@ async function warnIfSillyimagesActive() {
 
         /* body */
         const body = mk('div', { className: 'qs-body' });
-        body.append(buildApiSection(), buildRefsSection(), buildVisionSection());
+        body.append(buildApiSection(), buildStylesSection(), buildRefsSection(), buildVisionSection());
 
         panel.append(header, body);
         ov.appendChild(panel);
@@ -6584,10 +6584,113 @@ async function warnIfSillyimagesActive() {
         });
     }
 
+    /* ── Стили: включить в одно касание, править, картинка-референс ── */
+    // Те же данные и функции, что у раздела «Стили» в основных настройках (Module 2).
+    function buildStylesSection() {
+        return accordion('fa-solid fa-palette', 'Стили', body => {
+            const s = iig();
+            if (!s) { body.appendChild(mk('p', { className:'qs-hint', textContent:'Расширение не готово' })); return; }
+            let editingId = null;
+            const list = mk('div', { className:'qs-style-list' });
+            const addBtn = actionBtn('fa-solid fa-plus', 'Новый стиль');
+            body.append(
+                mk('p', { className:'qs-hint', textContent:'Нажми на стиль, чтобы включить. Активный стиль заменяет style из тега.' }),
+                list, addBtn,
+            );
+
+            // Сохранить и обновить раздел «Стили» в основных настройках, если он открыт.
+            const sync = () => { saveAll(); try { renderStyleSection(); } catch (e) { /* настройки ещё не отрисованы */ } };
+
+            function render() {
+                list.innerHTML = '';
+                const none = mk('div', { className:'qs-style-row' + (!s.activeStyleId ? ' qs-style-on' : '') });
+                none.innerHTML = '<i class="fa-solid fa-ban qs-style-mark"></i><div class="qs-style-text"><b>Без стиля</b><small>берётся из тега</small></div>';
+                none.addEventListener('click', () => { s.activeStyleId = ''; sync(); render(); });
+                list.appendChild(none);
+
+                for (const st of getStyles(s)) {
+                    const on = st.id === s.activeStyleId;
+                    const row = mk('div', { className:'qs-style-row' + (on ? ' qs-style-on' : '') });
+                    const mark = mk('i', { className:`fa-solid ${on ? 'fa-circle-check' : 'fa-circle'} qs-style-mark` });
+                    const text = mk('div', { className:'qs-style-text' });
+                    const preview = String(st.value || '').replace(/\s+/g, ' ').trim();
+                    text.append(
+                        mk('b', { textContent: st.name }),
+                        mk('small', { textContent: preview ? (preview.length > 60 ? preview.slice(0, 60) + '…' : preview) : 'пустой стиль' }),
+                    );
+                    const edit = iconBtn('fa-solid fa-pen', 'Править');
+                    edit.addEventListener('click', (e) => { e.stopPropagation(); editingId = editingId === st.id ? null : st.id; render(); });
+                    row.append(mark);
+                    if (st.imagePath) row.append(mk('img', { className:'qs-style-thumb', src: st.imagePath, alt:'' }));
+                    row.append(text, edit);
+                    row.addEventListener('click', () => { s.activeStyleId = on ? '' : st.id; sync(); render(); });
+                    list.appendChild(row);
+                    if (editingId === st.id) list.appendChild(buildEditor(st));
+                }
+            }
+
+            function buildEditor(st) {
+                const ed = mk('div', { className:'qs-style-editor' });
+                const name = mk('input', { type:'text', className:'text_pole', value: st.name, placeholder:'Название' });
+                name.addEventListener('input', () => { st.name = name.value; sync(); });
+                name.addEventListener('change', render); // подпись в строке — после ухода с поля
+                const val = mk('textarea', { className:'text_pole', rows:4, value: st.value, placeholder:'semi_realism, muted colors, soft lighting' });
+                val.addEventListener('input', () => { st.value = val.value; sync(); });
+                val.addEventListener('change', render);
+
+                const imgRow = mk('div', { className:'qs-style-img-row' });
+                imgRow.append(st.imagePath
+                    ? mk('img', { className:'qs-style-img', src: st.imagePath, alt:'' })
+                    : mk('div', { className:'qs-style-img qs-style-img-empty', innerHTML:'<i class="fa-solid fa-image"></i>' }));
+                const upload = mk('label', { className:'qs-action-btn', innerHTML:`<i class="fa-solid fa-upload"></i> ${st.imagePath ? 'Заменить' : 'Картинка стиля'}` });
+                const file = mk('input', { type:'file', accept:'image/*' });
+                file.style.display = 'none';
+                upload.appendChild(file);
+                file.addEventListener('change', async () => {
+                    const f = file.files?.[0];
+                    if (!f) return;
+                    try {
+                        const raw = await new Promise((res, rej) => { const r = new FileReader(); r.onloadend = () => res(r.result.split(',')[1]); r.onerror = rej; r.readAsDataURL(f); });
+                        const jpeg = await compressBase64Image(raw, 1024, 0.85);
+                        st.imagePath = await saveRefImageToFile(jpeg, `style_${st.name}`);
+                        sync(); render();
+                        toastr.success('Картинка стиля сохранена', '', { timeOut: 1500 });
+                    } catch (err) { toastr.error('Не удалось загрузить: ' + err.message, ''); }
+                });
+                imgRow.append(upload);
+                if (st.imagePath) {
+                    const rm = actionBtn('fa-solid fa-xmark', 'Убрать');
+                    rm.addEventListener('click', () => { st.imagePath = ''; sync(); render(); });
+                    imgRow.append(rm);
+                }
+
+                const del = actionBtn('fa-solid fa-trash', 'Удалить стиль');
+                del.classList.add('qs-style-del');
+                del.addEventListener('click', () => {
+                    if (!confirm(`Удалить стиль «${st.name}»?`)) return;
+                    s.styles = s.styles.filter(x => x.id !== st.id);
+                    if (s.activeStyleId === st.id) s.activeStyleId = '';
+                    editingId = null;
+                    sync(); render();
+                });
+                ed.append(name, val, imgRow, del);
+                return ed;
+            }
+
+            addBtn.addEventListener('click', () => {
+                const st = { id: makeStyleId(), name: `Стиль ${getStyles(s).length + 1}`, value: '', imagePath: '' };
+                s.styles.push(st);
+                editingId = st.id;
+                sync(); render();
+            });
+            render();
+        });
+    }
+
     window._qsBuildSettingsContent = function(container) {
         const wrap = mk('div', { className: 'qs-body' });
         wrap.style.cssText = 'padding:0;overflow:visible;';
-        wrap.append(buildApiSection(), buildRefsSection(), buildVisionSection(), buildTagsSection());
+        wrap.append(buildApiSection(), buildStylesSection(), buildRefsSection(), buildVisionSection(), buildTagsSection());
         container.appendChild(wrap);
     };
 

@@ -2517,3 +2517,37 @@
 .iig-ref-instruction textarea { width: 100%; box-sizing: border-box; resize: vertical; min-height: 90px; }
 .iig-ref-instruction textarea:disabled { opacity: 0.45; }
 .iig-ref-instruction .menu_button { width: max-content !important; white-space: nowrap; align-self: flex-start; }
+
+/* ── Быстрые настройки: стили ── */
+.qs-style-list { display: flex; flex-direction: column; gap: 5px; }
+.qs-style-row {
+    display: flex; align-items: center; gap: 9px;
+    min-height: 44px; padding: 6px 8px 6px 10px; box-sizing: border-box;
+    border-radius: 9px; border: 1px solid rgba(255,255,255,0.06);
+    background: rgba(255,255,255,0.03);
+    cursor: pointer; -webkit-tap-highlight-color: transparent;
+    transition: border-color 0.15s, background 0.15s;
+}
+.qs-style-row:active { background: rgba(255,255,255,0.07); }
+.qs-style-row.qs-style-on {
+    border-color: rgba(232,96,122,0.5); background: rgba(232,96,122,0.1);
+    box-shadow: inset 3px 0 0 #e8607a;
+}
+.qs-style-mark { flex-shrink: 0; font-size: 13px; opacity: 0.45; width: 16px; text-align: center; }
+.qs-style-on .qs-style-mark { opacity: 1; color: #e8607a; }
+.qs-style-thumb { width: 30px; height: 30px; flex-shrink: 0; border-radius: 6px; object-fit: cover; }
+.qs-style-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.qs-style-text b { font-size: 0.86em; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qs-style-text small { font-size: 0.72em; opacity: 0.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qs-style-editor {
+    display: flex; flex-direction: column; gap: 7px;
+    margin: -1px 0 4px; padding: 10px; border-radius: 0 0 9px 9px;
+    border: 1px solid rgba(232,96,122,0.25); border-top: none; background: rgba(0,0,0,0.15);
+}
+.qs-style-editor .text_pole { width: 100%; box-sizing: border-box; margin: 0; }
+.qs-style-editor textarea { resize: vertical; min-height: 80px; }
+.qs-style-img-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.qs-style-img { width: 56px; height: 56px; flex-shrink: 0; border-radius: 8px; object-fit: cover; border: 1px solid rgba(255,255,255,0.1); }
+.qs-style-img-empty { display: flex; align-items: center; justify-content: center; border-style: dashed; opacity: 0.5; }
+.qs-style-img-row .qs-action-btn { width: auto; flex: 1 1 auto; margin: 0; }
+.qs-style-del { width: auto !important; align-self: flex-start; color: #f87171 !important; }
