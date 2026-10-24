@@ -404,11 +404,15 @@
                 for (const side of ['bot', 'user']) for (const o of (w[side] || [])) addRef(o.imagePath);
             }
         }
-        const iig = ctx.extensionSettings?.inline_image_gen;
-        if (iig) {
+        // Настройки генерации: текущие (vish_image_gen) и старые (inline_image_gen),
+        // чтобы чистка не удалила файлы, на которые ссылается любая из копий.
+        for (const key of ['vish_image_gen', 'inline_image_gen']) {
+            const iig = ctx.extensionSettings?.[key];
+            if (!iig) continue;
             addRef(iig.charRef?.imagePath);
             addRef(iig.userRef?.imagePath);
             for (const n of (iig.npcReferences || [])) addRef(n?.imagePath);
+            for (const st of (Array.isArray(iig.styles) ? iig.styles : [])) addRef(st?.imagePath);
         }
         return { referenced, dir };
     }
@@ -1049,7 +1053,10 @@
    ║  + wardrobe integration                                      ║
    ╚═══════════════════════════════════════════════════════════════╝ */
 
-const MODULE_NAME = 'inline_image_gen';
+// Свой ключ настроек: под 'inline_image_gen' живёт sillyimages, и вместе
+// они перезаписывали бы друг другу настройки.
+const MODULE_NAME = 'vish_image_gen';
+const LEGACY_MODULE_NAME = 'inline_image_gen';
 
 const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const FETCH_TIMEOUT = IS_IOS ? 180000 : 300000;
@@ -1144,6 +1151,13 @@ const defaultSettings = Object.freeze({
     imageContextEnabled: false,
     imageContextCount: 1,
     npcReferences: [],
+    // Внешние блоки: теги картинок в message.extra.extblocks (их пишут
+    // расширения-трекеры, отображаются через message.extra.display_text).
+    externalBlocks: false,
+    // Библиотека стилей: [{ id, name, value, imagePath }]. Формат совпадает
+    // с sillyimages, поэтому его стили переносятся при копировании настроек.
+    styles: [],
+    activeStyleId: '',
 });
 
 const MAX_CONTEXT_IMAGES = 3;
@@ -1232,11 +1246,17 @@ function isGeminiModel(modelId) {
 function getSettings() {
     const context = SillyTavern.getContext();
     if (!context.extensionSettings[MODULE_NAME]) {
-        context.extensionSettings[MODULE_NAME] = structuredClone(defaultSettings);
+        // Первый запуск: один раз копируем старые настройки (vish раньше
+        // хранил их под ключом sillyimages). Оригинал не трогаем.
+        const legacy = context.extensionSettings[LEGACY_MODULE_NAME];
+        context.extensionSettings[MODULE_NAME] = legacy && typeof legacy === 'object'
+            ? structuredClone(legacy)
+            : structuredClone(defaultSettings);
     }
     for (const key of Object.keys(defaultSettings)) {
         if (!Object.hasOwn(context.extensionSettings[MODULE_NAME], key)) {
-            context.extensionSettings[MODULE_NAME][key] = defaultSettings[key];
+            const value = defaultSettings[key];
+            context.extensionSettings[MODULE_NAME][key] = value && typeof value === 'object' ? structuredClone(value) : value;
         }
     }
     return context.extensionSettings[MODULE_NAME];
@@ -3584,6 +3604,19 @@ function initRegenObserver() {
     iigLog('INFO', 'Regen observer started on #chat');
 }
 
+// sillyimages обрабатывает те же теги: если оно включено вместе с vish,
+// каждая картинка генерируется дважды.
+async function warnIfSillyimagesActive() {
+    const disabled = SillyTavern.getContext().extensionSettings?.disabledExtensions || [];
+    if (disabled.includes('third-party/sillyimages')) return;
+    try {
+        const response = await fetch('/scripts/extensions/third-party/sillyimages/manifest.json', { method: 'HEAD' });
+        if (!response.ok) return;
+    } catch (e) { return; }
+    toastr.warning('Включены и Chamber of Secrets, и sillyimages — картинки будут генерироваться дважды. Отключи sillyimages в Extensions.',
+        'Chamber of Secrets', { timeOut: 0, extendedTimeOut: 0 });
+}
+
 /* ── Init ── */
 (function init() {
     const context = SillyTavern.getContext();
@@ -3592,6 +3625,7 @@ function initRegenObserver() {
     getSettings();
 
     context.eventSource.on(context.event_types.APP_READY, () => {
+        warnIfSillyimagesActive();
         restoreRefsFromLocalStorage();
         createSettingsUI();
         addButtonsToExistingMessages();
@@ -3695,7 +3729,7 @@ function initRegenObserver() {
 
     function vwIIGData() {
         const ctx = SillyTavern.getContext();
-        const s = ctx.extensionSettings['inline_image_gen'];
+        const s = ctx.extensionSettings[MODULE_NAME];
         if (!s) return { npcReferences: [] };
         // Merge localStorage backup if settings refs are empty but backup has data
         if ((!s.npcReferences || s.npcReferences.length === 0)) {
@@ -4174,7 +4208,7 @@ function initRegenObserver() {
     async function vwAnalyzeOutfit(base64) {
         const ctx = SillyTavern.getContext();
         const sw  = ctx.extensionSettings['silly_wardrobe'] || {};
-        const iig = ctx.extensionSettings['inline_image_gen'] || {};
+        const iig = ctx.extensionSettings[MODULE_NAME] || {};
         let ep    = (sw.visionEndpoint || '').trim().replace(/\/$/, '');
         let key   = (sw.visionApiKey   || '').trim();
         let model = (sw.visionModel    || '').trim();
@@ -4579,7 +4613,7 @@ function initRegenObserver() {
     const san = t => { const d = document.createElement('div'); d.textContent = t||''; return d.innerHTML; };
     const mk  = (tag, props={}) => Object.assign(document.createElement(tag), props);
     const ctx = () => SillyTavern.getContext();
-    const iig = () => ctx().extensionSettings['inline_image_gen'] || null;
+    const iig = () => ctx().extensionSettings[MODULE_NAME] || null;
     const sw  = () => ctx().extensionSettings['silly_wardrobe']   || null;
     const saveAll = () => {
         ctx().saveSettingsDebounced();
