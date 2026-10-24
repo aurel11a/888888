@@ -2077,15 +2077,245 @@
 }
 .vw-tags-add:hover { background: rgba(232,96,122,0.16); border-style: solid; }
 
-/* ── Стили: картинка-референс ── */
-#iig_style_editor { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
-#iig_style_value { width: 100%; resize: vertical; }
+/* ── Стили: библиотека и редактор (оформление из sillyimages) ── */
+#iig_styles_section { container-type: inline-size; }
+
+.iig-settings-group {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 8px;
+    padding: 9px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.1);
+}
+
+.iig-settings-group-title {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-weight: 600;
+}
+
+.iig-settings .iig-button-inline,
+.iig-settings .iig-button-inline > span {
+    white-space: nowrap !important;
+}
+
+.iig-settings .iig-button-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.iig-library-empty {
+    padding: 10px;
+    border: 1px dashed var(--SmartThemeBorderColor);
+    border-radius: 7px;
+    opacity: 0.68;
+    text-align: center;
+}
+
+/* В узкой панели — список над редактором, в широкой — рядом. */
+.iig-style-workspace {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    align-items: start;
+    margin-top: 6px;
+}
+
+@container (min-width: 620px) {
+    .iig-style-workspace {
+        grid-template-columns: minmax(190px, 0.8fr) minmax(280px, 1.2fr);
+    }
+}
+
+.iig-style-library-head { flex-wrap: wrap; }
+.iig-style-library-head #iig_style_add { margin-left: auto; }
+
+#iig_style_presets,
+.iig-style-list,
+.iig-style-editor-content {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 7px;
+}
+
+.iig-style-list {
+    max-height: 210px;
+    gap: 4px;
+    overflow: auto;
+}
+
+.iig-style-search-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.iig-style-search-wrap > i {
+    position: absolute;
+    left: 10px;
+    z-index: 1;
+    opacity: 0.65;
+    pointer-events: none;
+}
+
+.iig-settings .iig-style-search-wrap > input { padding-left: 30px; }
+
+.iig-style-item {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+    align-items: stretch;
+    gap: 5px;
+    padding: 3px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 7px;
+    background: rgba(0, 0, 0, 0.1);
+}
+
+.iig-style-item.selected {
+    border-color: var(--SmartThemeQuoteColor);
+    background: color-mix(in srgb, var(--SmartThemeQuoteColor) 14%, transparent);
+}
+
+.iig-style-item.active { box-shadow: inset 3px 0 0 var(--SmartThemeQuoteColor); }
+
+.iig-style-activation,
+.iig-style-item-actions .menu_button {
+    width: 28px;
+    min-width: 28px;
+    min-height: 28px;
+    margin: 0;
+    padding: 4px;
+}
+
+.iig-style-item.active .iig-style-activation { color: var(--SmartThemeQuoteColor); }
+
+.iig-style-item-select {
+    display: flex;
+    min-width: 0;
+    width: 100%;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 0;
+    margin: 0;
+    padding: 2px 5px;
+    text-align: left;
+}
+
+.iig-settings .iig-style-item-select strong,
+.iig-settings .iig-style-item-select small {
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap !important;
+}
+
+.iig-style-item-select small {
+    opacity: 0.68;
+    font-size: 0.78em;
+    line-height: 1.15;
+}
+
+.iig-style-item-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.iig-settings #iig_style_presets .iig-style-none {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 7px;
+    margin: 0;
+    padding: 5px 7px;
+    color: var(--SmartThemeBodyColor);
+    background: var(--SmartThemeBlurTintColor);
+    border: 1px solid var(--SmartThemeBorderColor);
+    opacity: 1;
+    filter: none;
+}
+
+.iig-settings #iig_style_presets .iig-style-none[aria-pressed="true"] {
+    border-color: var(--SmartThemeQuoteColor);
+    box-shadow: inset 3px 0 0 var(--SmartThemeQuoteColor);
+    font-weight: 600;
+}
+
+.iig-style-editor-status {
+    display: inline-flex;
+    width: max-content;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 999px;
+    opacity: 0.72;
+    font-size: 0.82em;
+}
+
+.iig-style-editor-status.active {
+    border-color: var(--SmartThemeQuoteColor);
+    color: var(--SmartThemeQuoteColor);
+    opacity: 1;
+}
+
+.iig-style-field {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.iig-style-field > span {
+    font-size: 0.85em;
+    opacity: 0.76;
+}
+
+.iig-style-field #iig_style_value {
+    min-height: 132px;
+    resize: vertical;
+}
+
+.iig-style-editor-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+
+.iig-style-autosave {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-left: auto;
+    opacity: 0.62;
+    font-size: 0.8em;
+}
+
+.iig-style-editor-empty {
+    min-height: 132px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
 .iig-style-image-row { display: flex; align-items: center; gap: 10px; }
 .iig-style-image-preview {
     width: 72px; height: 72px; flex: 0 0 72px;
     border: 1px solid var(--SmartThemeBorderColor); border-radius: 8px; object-fit: cover;
 }
-.iig-style-image-empty { display: flex; align-items: center; justify-content: center; opacity: 0.45; }
+.iig-style-image-empty { display: flex; align-items: center; justify-content: center; border-style: dashed; opacity: 0.6; }
 .iig-style-image-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 
 /* ── Кнопка «Стоп» на плейсхолдере генерации ── */

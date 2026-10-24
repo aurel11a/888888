@@ -2964,13 +2964,21 @@ function createSettingsUI() {
 
                     <!-- Styles Section -->
                     <div class="iig-section" id="iig_styles_section">
-                        <h4><i class="fa-solid fa-palette"></i> Стиль</h4>
-                        <div class="flex-row">
-                            <label for="iig_style_select">Активный стиль</label>
-                            <select id="iig_style_select" class="flex1"></select>
-                            <div id="iig_style_add" class="menu_button" title="Новый стиль"><i class="fa-solid fa-plus"></i></div>
+                        <h4><i class="fa-solid fa-palette"></i> Стили</h4>
+                        <div class="iig-style-workspace">
+                            <div class="iig-settings-group iig-style-library">
+                                <div class="iig-settings-group-title iig-style-library-head">
+                                    <i class="fa-solid fa-swatchbook"></i>
+                                    <span>Библиотека стилей</span>
+                                    <button type="button" id="iig_style_add" class="menu_button iig-button-inline"><i class="fa-solid fa-plus"></i><span>Новый стиль</span></button>
+                                </div>
+                                <div id="iig_style_presets"></div>
+                            </div>
+                            <div class="iig-settings-group iig-style-editor-group">
+                                <div class="iig-settings-group-title"><i class="fa-solid fa-pen-to-square"></i><span>Редактор</span></div>
+                                <div id="iig_style_editor"></div>
+                            </div>
                         </div>
-                        <div id="iig_style_editor"></div>
                         <p class="hint">Активный стиль заменяет style из тега. Картинка стиля уходит референсом в Gemini и Naistera.</p>
                     </div>
 
@@ -3172,82 +3180,233 @@ function createSettingsUI() {
     }
 }
 
-function renderStyleSection() {
-    const settings = getSettings();
-    const select = document.getElementById('iig_style_select');
-    const editor = document.getElementById('iig_style_editor');
-    if (!select || !editor) return;
+// Какой стиль открыт в редакторе (не обязательно активный) и строка поиска.
+let selectedStyleId = '';
+let styleSearchQuery = '';
+
+function getSelectedStyle(settings = getSettings()) {
     const styles = getStyles(settings);
-    const active = getActiveStyle(settings);
+    if (!styles.some(st => st.id === selectedStyleId)) {
+        selectedStyleId = settings.activeStyleId || styles[0]?.id || '';
+    }
+    return styles.find(st => st.id === selectedStyleId) || null;
+}
 
-    select.innerHTML = `<option value="">— Без стиля (из тега) —</option>` + styles.map(st =>
-        `<option value="${sanitizeForHtml(st.id)}" ${st.id === settings.activeStyleId ? 'selected' : ''}>${st.imagePath ? '🖼 ' : ''}${sanitizeForHtml(st.name)}</option>`
-    ).join('');
+function getStylePreview(value) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    if (!text) return 'Пустой стиль';
+    return text.length > 50 ? `${text.slice(0, 50).trimEnd()}...` : text;
+}
 
-    if (!active) { editor.innerHTML = ''; return; }
-    const preview = active.imagePath
-        ? `<img class="iig-style-image-preview" src="${sanitizeForHtml(active.imagePath)}" alt="">`
-        : `<div class="iig-style-image-preview iig-style-image-empty"><i class="fa-solid fa-image"></i></div>`;
-    editor.innerHTML = `
-        <div class="flex-row">
-            <label for="iig_style_name">Название</label>
-            <input type="text" id="iig_style_name" class="text_pole flex1" value="${sanitizeForHtml(active.name)}">
-        </div>
-        <textarea id="iig_style_value" class="text_pole" rows="4" placeholder="semi_realism, muted colors, soft lighting">${sanitizeForHtml(active.value)}</textarea>
-        <div class="iig-style-image-row">
-            ${preview}
-            <div class="iig-style-image-actions">
-                <label class="menu_button" title="Картинка-референс стиля">
-                    <i class="fa-solid fa-upload"></i> ${active.imagePath ? 'Заменить картинку' : 'Картинка стиля'}
-                    <input type="file" id="iig_style_image_file" accept="image/*" style="display:none">
-                </label>
-                ${active.imagePath ? '<div id="iig_style_image_remove" class="menu_button"><i class="fa-solid fa-xmark"></i> Убрать картинку</div>' : ''}
-                <div id="iig_style_delete" class="menu_button" style="color:#cc5555;"><i class="fa-solid fa-trash"></i> Удалить стиль</div>
+function buildStyleListHtml(settings = getSettings()) {
+    const styles = getStyles(settings);
+    const activeId = settings.activeStyleId;
+    getSelectedStyle(settings);
+    const searchHtml = styles.length > 8 || styleSearchQuery ? `
+        <label class="iig-style-search-wrap">
+            <i class="fa-solid fa-magnifying-glass"></i>
+            <input id="iig_style_search" class="text_pole" type="search" value="${sanitizeForHtml(styleSearchQuery)}" placeholder="Поиск стилей">
+        </label>` : '';
+    const rowsHtml = styles.map(st => `
+        <div class="iig-style-item ${st.id === activeId ? 'active' : ''} ${st.id === selectedStyleId ? 'selected' : ''}" data-style-id="${sanitizeForHtml(st.id)}" data-style-search="${sanitizeForHtml(`${st.name} ${st.value}`.toLowerCase())}">
+            <button type="button" class="menu_button iig-style-activation" data-style-activate="${sanitizeForHtml(st.id)}" title="${st.id === activeId ? 'Выключить' : 'Сделать активным'}">
+                <i class="fa-solid ${st.id === activeId ? 'fa-circle-check' : 'fa-circle'}"></i>
+            </button>
+            <button type="button" class="menu_button iig-style-item-select" data-style-select="${sanitizeForHtml(st.id)}">
+                <strong>${st.imagePath ? '<i class="fa-solid fa-image" title="Есть картинка-референс"></i> ' : ''}${sanitizeForHtml(st.name)}</strong>
+                <small>${sanitizeForHtml(getStylePreview(st.value))}</small>
+            </button>
+            <div class="iig-style-item-actions">
+                <button type="button" class="menu_button" data-style-duplicate="${sanitizeForHtml(st.id)}" title="Копия"><i class="fa-solid fa-copy"></i></button>
+                <button type="button" class="menu_button redWarningBG" data-style-remove="${sanitizeForHtml(st.id)}" title="Удалить"><i class="fa-solid fa-trash"></i></button>
+            </div>
+        </div>`).join('');
+
+    return `
+        ${searchHtml}
+        <div class="iig-style-list">
+            <button type="button" class="menu_button iig-style-none" data-style-disable aria-pressed="${!activeId}">
+                <i class="fa-solid fa-ban"></i>
+                <span>Без стиля (из тега)</span>
+            </button>
+            ${rowsHtml ? `${rowsHtml}<div class="iig-library-empty iig-style-search-empty iig-hidden" role="status">Ничего не найдено.</div>` : '<div class="iig-library-empty">Стилей пока нет.</div>'}
+        </div>`;
+}
+
+function buildStyleEditorHtml(settings = getSettings()) {
+    const style = getSelectedStyle(settings);
+    if (!style) return '<div class="iig-library-empty iig-style-editor-empty">Стилей пока нет.</div>';
+    const isActive = style.id === settings.activeStyleId;
+    const preview = style.imagePath
+        ? `<img class="iig-style-image-preview" src="${sanitizeForHtml(style.imagePath)}" alt="">`
+        : '<div class="iig-style-image-preview iig-style-image-empty"><i class="fa-solid fa-image"></i></div>';
+    return `
+        <div class="iig-style-editor-content">
+            <div class="iig-style-editor-status ${isActive ? 'active' : ''}">
+                <i class="fa-solid ${isActive ? 'fa-circle-check' : 'fa-circle'}"></i>
+                <span>${isActive ? 'Активен' : 'Неактивен'}</span>
+            </div>
+            <label class="iig-style-field" for="iig_style_name">
+                <span>Название</span>
+                <input type="text" id="iig_style_name" class="text_pole" value="${sanitizeForHtml(style.name)}">
+            </label>
+            <label class="iig-style-field" for="iig_style_value">
+                <span>Стиль</span>
+                <textarea id="iig_style_value" class="text_pole" rows="6" placeholder="semi_realism, muted colors, soft lighting">${sanitizeForHtml(style.value)}</textarea>
+            </label>
+            <div class="iig-style-field">
+                <span>Картинка-референс стиля</span>
+                <div class="iig-style-image-row">
+                    ${preview}
+                    <div class="iig-style-image-actions">
+                        <label class="menu_button iig-button-inline">
+                            <i class="fa-solid fa-upload"></i><span>${style.imagePath ? 'Заменить' : 'Загрузить'}</span>
+                            <input type="file" id="iig_style_image_file" accept="image/*" style="display:none">
+                        </label>
+                        ${style.imagePath ? '<button type="button" id="iig_style_image_remove" class="menu_button iig-button-inline"><i class="fa-solid fa-xmark"></i><span>Убрать</span></button>' : ''}
+                    </div>
+                </div>
+            </div>
+            <div class="iig-style-editor-actions">
+                <button type="button" id="iig_style_toggle_active" class="menu_button iig-button-inline">
+                    <i class="fa-solid ${isActive ? 'fa-ban' : 'fa-circle-check'}"></i>
+                    <span>${isActive ? 'Выключить' : 'Сделать активным'}</span>
+                </button>
+                <button type="button" id="iig_style_duplicate" class="menu_button iig-button-inline"><i class="fa-solid fa-copy"></i><span>Копия</span></button>
+                <button type="button" id="iig_style_remove" class="menu_button iig-button-inline redWarningBG"><i class="fa-solid fa-trash"></i><span>Удалить</span></button>
+                <span class="iig-style-autosave"><i class="fa-solid fa-floppy-disk"></i> Автосохранение</span>
             </div>
         </div>`;
 }
 
+function filterStyleList() {
+    const query = styleSearchQuery.trim().toLowerCase();
+    let visibleCount = 0;
+    document.querySelectorAll('#iig_style_presets .iig-style-item').forEach((item) => {
+        const visible = !query || String(item.getAttribute('data-style-search') || '').includes(query);
+        item.classList.toggle('iig-hidden', !visible);
+        if (visible) visibleCount++;
+    });
+    document.querySelector('#iig_style_presets .iig-style-search-empty')?.classList.toggle('iig-hidden', !query || visibleCount > 0);
+}
+
+function renderStyleSection() {
+    const settings = getSettings();
+    const list = document.getElementById('iig_style_presets');
+    const editor = document.getElementById('iig_style_editor');
+    if (!list || !editor) return;
+    // Сохраняем прокрутку списка, иначе после клика он прыгает наверх.
+    const scrollTop = list.querySelector('.iig-style-list')?.scrollTop || 0;
+    list.innerHTML = buildStyleListHtml(settings);
+    const newList = list.querySelector('.iig-style-list');
+    if (newList) newList.scrollTop = scrollTop;
+    filterStyleList();
+    editor.innerHTML = buildStyleEditorHtml(settings);
+}
+
+function setActiveStyle(styleId) {
+    const settings = getSettings();
+    settings.activeStyleId = styleId;
+    saveSettings();
+    renderStyleSection();
+}
+
+function duplicateStyle(styleId) {
+    const settings = getSettings();
+    const source = getStyles(settings).find(st => st.id === styleId);
+    if (!source) return;
+    const copy = { id: makeStyleId(), name: `Копия ${source.name}`, value: source.value, imagePath: source.imagePath };
+    settings.styles.splice(settings.styles.indexOf(source) + 1, 0, copy);
+    selectedStyleId = copy.id;
+    saveSettings();
+    renderStyleSection();
+}
+
+async function deleteStyle(styleId) {
+    const settings = getSettings();
+    const style = getStyles(settings).find(st => st.id === styleId);
+    if (!style) return;
+    const popup = SillyTavern.getContext().Popup;
+    const ok = typeof popup?.show?.confirm === 'function'
+        ? await popup.show.confirm('Удалить стиль?', `«${style.name}» будет удалён.`)
+        : window.confirm(`Удалить стиль «${style.name}»?`);
+    if (!ok) return;
+    settings.styles = settings.styles.filter(st => st.id !== styleId);
+    if (settings.activeStyleId === styleId) settings.activeStyleId = '';
+    if (selectedStyleId === styleId) selectedStyleId = '';
+    saveSettings();
+    renderStyleSection();
+}
+
 function bindStyleEvents() {
     const settings = getSettings();
-    const section = document.getElementById('iig_styles_section');
-    if (!section) return;
-
-    document.getElementById('iig_style_select')?.addEventListener('change', (e) => {
-        settings.activeStyleId = e.target.value;
-        saveSettings();
-        renderStyleSection();
-    });
+    const list = document.getElementById('iig_style_presets');
+    const editor = document.getElementById('iig_style_editor');
+    if (!list || !editor) return;
 
     document.getElementById('iig_style_add')?.addEventListener('click', () => {
         const style = { id: makeStyleId(), name: `Стиль ${getStyles(settings).length + 1}`, value: '', imagePath: '' };
         settings.styles.push(style);
-        settings.activeStyleId = style.id;
+        selectedStyleId = style.id;
+        styleSearchQuery = '';
         saveSettings();
         renderStyleSection();
-        document.getElementById('iig_style_value')?.focus();
+        document.getElementById('iig_style_name')?.select();
     });
 
-    // Поля редактора пересоздаются при рендере, поэтому события ловим на секции.
-    section.addEventListener('input', (e) => {
-        const active = getActiveStyle(settings);
-        if (!active) return;
-        if (e.target.id === 'iig_style_name') {
-            active.name = e.target.value;
-            const option = document.querySelector(`#iig_style_select option[value="${CSS.escape(active.id)}"]`);
-            if (option) option.textContent = `${active.imagePath ? '🖼 ' : ''}${active.name || 'Стиль'}`;
-        } else if (e.target.id === 'iig_style_value') {
-            active.value = e.target.value;
-        } else {
+    list.addEventListener('input', (e) => {
+        if (e.target.id !== 'iig_style_search') return;
+        styleSearchQuery = e.target.value;
+        filterStyleList();
+    });
+
+    list.addEventListener('click', async (e) => {
+        const target = e.target instanceof Element ? e.target : null;
+        if (!target) return;
+        if (target.closest('[data-style-disable]')) { setActiveStyle(''); return; }
+        const activate = target.closest('[data-style-activate]');
+        if (activate) {
+            const id = activate.getAttribute('data-style-activate');
+            setActiveStyle(settings.activeStyleId === id ? '' : id);
             return;
         }
-        saveSettings();
+        const select = target.closest('[data-style-select]');
+        if (select) {
+            selectedStyleId = select.getAttribute('data-style-select');
+            renderStyleSection();
+            return;
+        }
+        const duplicate = target.closest('[data-style-duplicate]');
+        if (duplicate) { duplicateStyle(duplicate.getAttribute('data-style-duplicate')); return; }
+        const remove = target.closest('[data-style-remove]');
+        if (remove) await deleteStyle(remove.getAttribute('data-style-remove'));
     });
 
-    section.addEventListener('change', async (e) => {
+    // Поля редактора пересоздаются при рендере, поэтому события ловим на контейнере.
+    editor.addEventListener('input', (e) => {
+        const style = getSelectedStyle(settings);
+        if (!style) return;
+        if (e.target.id === 'iig_style_name') style.name = e.target.value;
+        else if (e.target.id === 'iig_style_value') style.value = e.target.value;
+        else return;
+        saveSettings();
+        // Обновляем только строку в списке, чтобы не сбить фокус в редакторе.
+        const row = list.querySelector(`.iig-style-item[data-style-id="${CSS.escape(style.id)}"]`);
+        if (row) {
+            const title = row.querySelector('strong');
+            if (title) title.innerHTML = `${style.imagePath ? '<i class="fa-solid fa-image"></i> ' : ''}${sanitizeForHtml(style.name || 'Стиль')}`;
+            const preview = row.querySelector('small');
+            if (preview) preview.textContent = getStylePreview(style.value);
+            row.setAttribute('data-style-search', `${style.name} ${style.value}`.toLowerCase());
+            filterStyleList();
+        }
+    });
+
+    editor.addEventListener('change', async (e) => {
         if (e.target.id !== 'iig_style_image_file') return;
-        const active = getActiveStyle(settings);
+        const style = getSelectedStyle(settings);
         const file = e.target.files?.[0];
-        if (!active || !file) return;
+        if (!style || !file) return;
         try {
             const rawBase64 = await new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -3256,10 +3415,10 @@ function bindStyleEvents() {
                 reader.readAsDataURL(file);
             });
             const compressed = await compressBase64Image(rawBase64, 1024, 0.85);
-            active.imagePath = await saveRefImageToFile(compressed, `style_${active.name}`);
+            style.imagePath = await saveRefImageToFile(compressed, `style_${style.name}`);
             saveSettings();
             renderStyleSection();
-            toastr.success(`Картинка стиля «${active.name}» сохранена`, 'Генерация картинок', { timeOut: 2000 });
+            toastr.success(`Картинка стиля «${style.name}» сохранена`, 'Генерация картинок', { timeOut: 2000 });
         } catch (err) {
             iigLog('ERROR', 'Style image upload failed:', err.message);
             toastr.error(`Не удалось загрузить картинку: ${err.message}`, 'Генерация картинок');
@@ -3267,21 +3426,18 @@ function bindStyleEvents() {
         e.target.value = '';
     });
 
-    section.addEventListener('click', async (e) => {
-        const active = getActiveStyle(settings);
-        if (!active) return;
-        if (e.target.closest('#iig_style_image_remove')) {
-            active.imagePath = '';
-            saveSettings();
-            renderStyleSection();
-        } else if (e.target.closest('#iig_style_delete')) {
-            const popup = SillyTavern.getContext().Popup;
-            const ok = typeof popup?.show?.confirm === 'function'
-                ? await popup.show.confirm('Удалить стиль?', `«${active.name}» будет удалён.`)
-                : window.confirm(`Удалить стиль «${active.name}»?`);
-            if (!ok) return;
-            settings.styles = settings.styles.filter(st => st.id !== active.id);
-            settings.activeStyleId = '';
+    editor.addEventListener('click', async (e) => {
+        const target = e.target instanceof Element ? e.target : null;
+        const style = getSelectedStyle(settings);
+        if (!target || !style) return;
+        if (target.closest('#iig_style_toggle_active')) {
+            setActiveStyle(settings.activeStyleId === style.id ? '' : style.id);
+        } else if (target.closest('#iig_style_duplicate')) {
+            duplicateStyle(style.id);
+        } else if (target.closest('#iig_style_remove')) {
+            await deleteStyle(style.id);
+        } else if (target.closest('#iig_style_image_remove')) {
+            style.imagePath = '';
             saveSettings();
             renderStyleSection();
         }
