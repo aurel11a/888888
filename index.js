@@ -4664,6 +4664,7 @@ async function warnIfSillyimagesActive() {
     const vwCatalog = { index: null, loading: false, error: '', loadedAt: 0 };
     let vwCatalogFilter = 'all';
     let vwCatalogQuery = '';
+    let vwCatalogSearchTimer = null;
     let vwCatalogPage = 0;
     const vwCatalogBusy = new Set(); // `${target}:${itemId}` — идёт импорт
     let vwCatalogSheetId = null;     // вещь, для которой открыт выбор «куда»
@@ -5147,7 +5148,9 @@ async function warnIfSillyimagesActive() {
         vwCatalog.loading = true; vwCatalog.error = '';
         if (vwMainTab === 'catalog') vwRenderBody(panel);
         try {
-            const resp = await fetch(`${VW_CATALOG_BASE}index.json?t=${Date.now()}`, { cache: 'no-store' });
+            // Метка меняется раз в минуту: между открытиями файл берётся из кэша браузера.
+            const stamp = force ? Date.now() : Math.floor(Date.now() / 60_000);
+            const resp = await fetch(`${VW_CATALOG_BASE}index.json?t=${stamp}`, force ? { cache: 'no-store' } : {});
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const index = await resp.json();
             vwCatalog.index = { ...index, items: Array.isArray(index.items) ? index.items : [] };
@@ -5240,7 +5243,7 @@ async function warnIfSillyimagesActive() {
                 const busy = [...vwCatalogBusy].some(k => k.endsWith(`:${it.id}`));
                 html += `<div class="vw-card vw-catalog-card" data-id="${san(it.id)}">
                     <div class="vw-card-img-wrap">
-                        <img src="${san(VW_CATALOG_BASE + (it.thumb || it.image || ''))}" class="vw-card-img" alt="${san(it.name)}" loading="lazy">
+                        <img src="${san(VW_CATALOG_BASE + (it.thumb || it.image || ''))}" class="vw-card-img" alt="${san(it.name)}" loading="lazy" decoding="async">
                         <div class="vw-type-badge" title="${san(cat.label)}"><i class="fa-solid ${san(cat.icon || 'fa-tag')}"></i></div>
                         ${marks.length ? `<div class="vw-catalog-marks">${marks.join('')}</div>` : ''}
                     </div>
@@ -5268,10 +5271,14 @@ async function warnIfSillyimagesActive() {
         const search = body.querySelector('.vw-catalog-search');
         search?.addEventListener('input', (e) => {
             vwCatalogQuery = e.target.value; vwCatalogPage = 0;
-            const pos = e.target.selectionStart;
-            vwRenderBody(panel);
-            const again = document.querySelector('#vw-body .vw-catalog-search');
-            if (again) { again.focus(); again.setSelectionRange(pos, pos); }
+            // Перерисовка — когда перестала печатать, а не на каждую букву.
+            clearTimeout(vwCatalogSearchTimer);
+            vwCatalogSearchTimer = setTimeout(() => {
+                const pos = e.target.selectionStart;
+                vwRenderBody(panel);
+                const again = document.querySelector('#vw-body .vw-catalog-search');
+                if (again) { again.focus(); again.setSelectionRange(pos, pos); }
+            }, 250);
         });
         body.querySelector('.vw-catalog-refresh')?.addEventListener('click', () => vwLoadCatalog(panel, true));
         for (const b of body.querySelectorAll('.vw-catalog-gender'))
