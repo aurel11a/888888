@@ -1833,7 +1833,8 @@
     cursor: pointer; transition: all 0.15s;
 }
 .vw-mode-btn:hover { border-color: rgba(232,96,122,0.4); color: var(--SmartThemeBodyColor); }
-.vw-mode-btn.vw-mode-on { background: rgba(232,96,122,0.18); border-color: rgba(232,96,122,0.55); color: #e8607a; box-shadow: 0 0 0 1px rgba(232,96,122,0.18); }
+/* !important: некоторые темы ST красят все кнопки через `button { … !important }`, и выбранный режим терялся. */
+.vw-mode-btn.vw-mode-on { background: rgba(232,96,122,0.18) !important; border-color: rgba(232,96,122,0.55); color: #e8607a !important; box-shadow: 0 0 0 1px rgba(232,96,122,0.18); }
 .vw-mode-btn i { font-size: 11px; }
 .vw-import-btn {
     margin-left: auto; display: inline-flex; align-items: center; gap: 5px;
