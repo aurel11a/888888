@@ -1901,7 +1901,8 @@ async function generateImageGemini(prompt, style, referenceImages = [], options 
         if (hasOutfits) rules.push('OUTFIT ACCURACY: The characters must wear EXACTLY the clothing shown in the OUTFIT REFERENCE images — same garments, colors, fabrics, accessories. Do not invent or change any clothing details.');
         if (hasContext) rules.push('STYLE CONSISTENCY: Match the art style, lighting, color palette, and rendering quality of the CONTEXT reference images. The generated image should look like it belongs to the same series.');
         if (hasStyleRef) rules.push('ART STYLE: Match the rendering technique, color palette, lighting and linework of the ART STYLE REFERENCE image. Do NOT copy its characters, clothing, objects or composition.');
-        if (!hasContext && style) rules.push(`STYLE: Generate in "${style}" style consistently. Do not mix styles.`);
+        // Сам текст стиля уже стоит перед сценой ([Style: …]) — здесь только ссылка, без второй копии.
+        if (!hasContext && style) rules.push('STYLE: Generate in the style given in [Style: ...] below, consistently. Do not mix styles.');
         refInstruction = `[STRICT IMAGE GENERATION RULES]\n${rules.join('\n')}\n[END RULES]\n\n`;
     }
 
