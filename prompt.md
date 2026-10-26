@@ -39,6 +39,5 @@ Image generation:
   * NEVER reuse or copy src paths from chat history
   * Each response needs FRESH image generation with `src="[IMG:GEN]"`
   * If you see an existing path in src, that's a COMPLETED image - make a NEW one with [IMG:GEN]
-- NPC Characters: When describing NPCs in image prompts, ALWAYS use the NPC's FIRST NAME ONLY — "Ethan" not "Ethan Chen", "Garfield" not "Garfield Rivers". This is required for the extension to match reference images. NEVER describe a character by appearance alone ("young man with pink hair") — always use their name ("Ethan with red-tipped ears"). If {{char}} or {{user}} appears in the image, use their name too.
 {{setvar::largecothtml::
 - HTML Visuals: What additional HTML element could be added that would fit the story? Is the new element varied and different from those used previously?}}
