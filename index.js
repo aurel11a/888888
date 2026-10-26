@@ -20,6 +20,7 @@ import { initLightbox } from './src/lightbox.js';
 import { initImageActions } from './src/imageActions.js';
 import { initOutfitInjection } from './src/wardrobe.js';
 import { initWardrobeUi } from './src/wardrobeUi.js';
+import { runVishMigrationOnce } from './src/migration.js';
 
 // sillyimages обрабатывает те же теги и использует те же id элементов настроек.
 async function warnIfSillyimagesActive() {
@@ -55,6 +56,8 @@ async function warnIfSillyimagesActive() {
         initOutfitInjection();
         // Кнопка гардероба у поля ввода; шторка создаётся только при открытии.
         initWardrobeUi();
+        // Разовый перенос нарядов и НПС из старого vish (старые данные не трогаются).
+        runVishMigrationOnce();
         // Add buttons to any messages already in chat.
         addButtonsToExistingMessages();
         // Lightbox: делегированный click-handler на #chat, оверлей один на страницу.

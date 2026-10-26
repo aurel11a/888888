@@ -23,12 +23,17 @@ async function loadExtension() {
         getRequestHeaders: () => ({ 'Content-Type': 'application/json' }),
     };
     const fetched = [];
+    const uploads = [];
     const context = vm.createContext({
         console, URL, Blob, FormData, AbortController, setTimeout, clearTimeout, structuredClone, atob, btoa,
         SillyTavern: { getContext: () => tavern },
         toastr: { success() {}, error() {}, warning() {}, info() {} },
-        fetch: async (url) => {
+        fetch: async (url, init) => {
             fetched.push(String(url));
+            if (String(url) === '/api/images/upload') {
+                uploads.push(JSON.parse(init.body));
+                return new Response(JSON.stringify({ path: `/user/images/${JSON.parse(init.body).ch_name}/f${uploads.length}.jpg` }), { headers: { 'Content-Type': 'application/json' } });
+            }
             return new Response(new Uint8Array([String(url).length]), { headers: { 'Content-Type': 'image/png' } });
         },
         FileReader: class {
@@ -54,14 +59,18 @@ async function loadExtension() {
         return module;
     }
     const sourceDir = path.resolve(__dirname, '../src');
-    const root = moduleFor(path.join(sourceDir, 'providers.js'));
+    const root = moduleFor(path.join(sourceDir, 'migration.js'));
     await root.link((specifier, parent) => moduleFor(path.resolve(path.dirname(parent.identifier), specifier)));
     await root.evaluate();
+    const providers = moduleFor(path.join(sourceDir, 'providers.js'));
+    await providers.link((specifier, parent) => moduleFor(path.resolve(path.dirname(parent.identifier), specifier)));
+    await providers.evaluate();
     const settingsModule = moduleFor(path.join(sourceDir, 'settings.js')).namespace;
     const settings = settingsModule.getSettings();
     Object.assign(settings, { userAvatarFile: 'me.png', useActiveUserPersonaAvatar: false, sendRefDescriptions: true });
     return {
-        tavern, prompts, fetched, settings,
+        tavern, prompts, fetched, uploads, settings,
+        migration: moduleFor(path.join(sourceDir, 'migration.js')).namespace,
         wardrobe: moduleFor(path.join(sourceDir, 'wardrobe.js')).namespace,
         references: moduleFor(path.join(sourceDir, 'references.js')).namespace,
         settingsModule,
@@ -178,4 +187,41 @@ test('style picture: kept on the style and sent only while the style is active',
 
     settingsModule.updateStyle('s1', { imagePath: '' });
     assert.equal('imagePath' in settings.styles[0], false, '«Убрать» стирает поле');
+});
+
+test('migration from old vish: base64 to files, shared to favorites, NPC to lorebook; old data untouched', async () => {
+    const { tavern, migration, wardrobe, settings, uploads } = await loadExtension();
+    const sw = {
+        wardrobes: {
+            Nolan: { bot: [{ id: 'o1', name: 'Hoodie', description: 'grey hoodie', base64: 'AAAA', type: 'casual' }], user: [{ id: 'u1', name: 'Dress', description: 'pink dress', base64: 'BBBB' }] },
+            Sam: { bot: [], user: [{ id: 'u2', name: 'Dress again', base64: 'BBBB' }] },
+            Gone: { bot: [{ id: 'g1', name: 'Coat', base64: 'CCCC' }], user: [] },
+        },
+        sharedBotWardrobe: [{ id: 's1', name: 'Suit', description: 'black suit', imagePath: '/user/images/iig_refs/suit.jpg', type: 'formal' }],
+        sharedUserWardrobe: [],
+    };
+    tavern.extensionSettings.silly_wardrobe = sw;
+    tavern.extensionSettings.vish_image_gen = { npcReferences: [{ name: 'Lily', imagePath: '/user/images/iig_refs/lily.png', enabled: true, outfit: { name: 'Cloak', description: 'black cloak', imagePath: '/user/images/iig_refs/cloak.jpg' } }] };
+    const before = JSON.stringify(tavern.extensionSettings.silly_wardrobe);
+
+    const stats = await migration.migrateFromVish();
+    assert.equal(stats.charOutfits, 1);
+    assert.equal(stats.userOutfits, 2);
+    assert.deepEqual([...stats.skippedChars], ['Gone']);
+    assert.equal(uploads.length, 2, 'одинаковая картинка Юзера сохранена один раз');
+    assert.ok(uploads.every(u => u.ch_name === 'wardrobe'));
+
+    const [hoodie] = wardrobe.getOutfits('char', NOLAN);
+    assert.equal(hoodie.name, 'Hoodie');
+    assert.equal(hoodie.category, 'casual');
+    assert.match(hoodie.imagePath, /^\/user\/images\/wardrobe\//);
+    assert.equal(wardrobe.getOutfits('user', ME).length, 1, 'дубль по файлу не добавился');
+    assert.equal(wardrobe.getFavorites()[0].name, 'Suit');
+
+    const book = settings.lorebooks.find(lb => lb.name === 'НПС из vish');
+    assert.deepEqual(JSON.parse(JSON.stringify(book.refs.map(r => [r.name, r.imagePath]))), [['Lily', '/user/images/iig_refs/lily.png'], ['Lily', '/user/images/iig_refs/cloak.jpg']]);
+    assert.match(book.refs[1].description, /outfit "Cloak": black cloak/);
+
+    assert.equal(JSON.stringify(tavern.extensionSettings.silly_wardrobe), before, 'старые данные не тронуты');
+    assert.equal(await migration.migrateFromVish(), null, 'второй раз не запускается');
 });
