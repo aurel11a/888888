@@ -202,10 +202,12 @@ function buildEntityOptionHtml(entity, selectedKey) {
 }
 
 function buildAppearanceItemsHtml(entry) {
-    if (entry.appearanceItems.length === 0) {
+    // Наряды гардероба здесь не показываются: ими управляет гардероб (кнопка в чате).
+    const items = entry.appearanceItems.filter((item) => !item.outfit);
+    if (items.length === 0) {
         return `<div class="iig-library-empty">${t`No appearance details.`}</div>`;
     }
-    return entry.appearanceItems.map((item) => {
+    return items.map((item) => {
         const isImage = item.type === 'image';
         const preview = isImage ? normalizeStoredImagePath(item.imagePath) : '';
         const temporaryPrimary = isImage && item.id === entry.temporaryPrimaryId;

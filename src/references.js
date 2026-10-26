@@ -32,6 +32,7 @@ import {
     filterPromptReferences,
 } from './parser.js';
 import { t } from './i18n.js';
+import { getWornOutfit } from './wardrobe.js';
 
 // ----- Module state -----
 
@@ -51,13 +52,26 @@ function makeCharacterLibraryItemId(prefix) {
 
 function normalizeCharacterAppearanceItem(raw) {
     const type = raw?.type === 'image' ? 'image' : 'text';
-    return {
+    const item = {
         id: String(raw?.id || '').trim() || makeCharacterLibraryItemId('appearance'),
         type,
         enabled: raw?.enabled !== false,
         imagePath: type === 'image' ? normalizeStoredImagePath(raw?.imagePath) : '',
         description: String(raw?.description || '').trim(),
     };
+    // Наряд гардероба (см. wardrobe.js): лишние поля сохраняются при нормализации.
+    if (raw?.outfit) {
+        Object.assign(item, {
+            outfit: true,
+            name: String(raw.name || '').trim(),
+            category: String(raw.category || 'other'),
+            gender: String(raw.gender || ''),
+            catalogId: String(raw.catalogId || ''),
+            addedAt: Number(raw.addedAt) || 0,
+            lastWorn: Number(raw.lastWorn) || 0,
+        });
+    }
+    return item;
 }
 
 function normalizeCharacterGeneration(raw) {
@@ -668,7 +682,19 @@ export async function collectCharacterLibraryReferences(kind, format, settings =
         }
     }
 
+    // Надетый в этом чате наряд — обычным референсом сразу после лица.
+    const worn = getWornOutfit(kind, key, settings);
+    const wornPath = normalizeStoredImagePath(worn?.imagePath);
+    if (wornPath) {
+        const image = await convert(wornPath);
+        if (image) {
+            const label = [worn.name ? `outfit "${worn.name}"` : 'outfit', worn.description].filter(Boolean).join(': ');
+            results.push(makeReferenceObject(image, label, source));
+        }
+    }
+
     for (const item of entry?.appearanceItems || []) {
+        if (item.outfit) continue; // наряды — только надетый, выше
         if (item.type !== 'image' || item.enabled === false) continue;
         if (item.id === temporaryPrimary?.id) continue;
         const imagePath = normalizeStoredImagePath(item.imagePath);

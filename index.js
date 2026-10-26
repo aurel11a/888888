@@ -18,6 +18,7 @@ import { registerIigBookMacro } from './src/references.js';
 import { resolveActiveProvider } from './src/providers.js';
 import { initLightbox } from './src/lightbox.js';
 import { initImageActions } from './src/imageActions.js';
+import { initOutfitInjection } from './src/wardrobe.js';
 
 // sillyimages обрабатывает те же теги и использует те же id элементов настроек.
 async function warnIfSillyimagesActive() {
@@ -50,6 +51,7 @@ async function warnIfSillyimagesActive() {
     context.eventSource.on(context.event_types.APP_READY, () => {
         warnIfSillyimagesActive();
         createSettingsUI();
+        initOutfitInjection();
         // Add buttons to any messages already in chat.
         addButtonsToExistingMessages();
         // Lightbox: делегированный click-handler на #chat, оверлей один на страницу.
