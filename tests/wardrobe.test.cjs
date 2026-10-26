@@ -216,7 +216,7 @@ test('migration from old vish: base64 to files, shared to favorites, NPC to lore
     assert.equal(hoodie.category, 'casual');
     assert.match(hoodie.imagePath, /^\/user\/images\/wardrobe\//);
     assert.equal(wardrobe.getOutfits('user', ME).length, 1, 'дубль по файлу не добавился');
-    assert.equal(wardrobe.getFavorites()[0].name, 'Suit');
+    assert.deepEqual([...wardrobe.getFavorites().map(f => f.name)].sort(), ['Dress', 'Suit'], 'наряды Юзера и общий гардероб — в избранном');
 
     const book = settings.lorebooks.find(lb => lb.name === 'НПС из vish');
     assert.deepEqual(JSON.parse(JSON.stringify(book.refs.map(r => [r.name, r.imagePath]))), [['Lily', '/user/images/iig_refs/lily.png'], ['Lily', '/user/images/iig_refs/cloak.jpg']]);

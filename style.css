@@ -460,6 +460,7 @@
 
 .iig-style-image-row {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 10px;
 }
@@ -482,6 +483,7 @@
 }
 
 .iig-style-image-actions {
+    flex: 1 1 150px;
     display: flex;
     flex-wrap: wrap;
     align-items: center;

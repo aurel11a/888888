@@ -2,7 +2,7 @@
  * Разовый перенос данных из старого vish (ветка main).
  *
  * - silly_wardrobe.wardrobes[имя].bot  → наряды персонажа с таким именем (base64 → файлы);
- * - silly_wardrobe.wardrobes[*].user   → наряды текущей персоны (одинаковые картинки — один раз);
+ * - silly_wardrobe.wardrobes[*].user   → наряды текущей персоны и Избранное (одинаковые картинки — один раз);
  * - общий гардероб (shared*Wardrobe, уже файлы) → Избранное;
  * - vish_image_gen.npcReferences       → лорбук «НПС из vish» (лицо и наряд — отдельные рефы).
  *
@@ -90,7 +90,10 @@ export async function migrateFromVish({ force = false } = {}) {
         for (const o of user) {
             const imagePath = await fileFor(o, `user ${o.name || ''}`);
             if (!imagePath) continue;
-            addOutfit('user', userKey, outfitData(o, imagePath), settings);
+            const data = outfitData(o, imagePath);
+            addOutfit('user', userKey, data, settings);
+            // В старом vish наряды Юзера не были привязаны к персоне — пусть будут доступны любой.
+            if (!isFavorite(data, settings)) toggleFavorite(data, settings);
             stats.userOutfits++;
         }
     }
@@ -142,6 +145,12 @@ export async function migrateFromVish({ force = false } = {}) {
 /** Запуск при старте: тихо, с одним тостом об итогах. */
 export async function runVishMigrationOnce() {
     try {
+        // Персона становится известна только к открытию чата; без неё наряды Юзера ушли бы на аватар по умолчанию.
+        if (!(await getCurrentUserReferenceKey()).startsWith('avatar:') || !SillyTavern.getContext().getCurrentChatId?.()) {
+            const context = SillyTavern.getContext();
+            context.eventSource.once?.(context.event_types.CHAT_CHANGED, () => setTimeout(runVishMigrationOnce, 500));
+            return;
+        }
         const stats = await migrateFromVish();
         if (!stats) return;
         const parts = [];

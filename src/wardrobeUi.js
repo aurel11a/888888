@@ -293,13 +293,15 @@ async function loadCatalog(force = false) {
     try {
         // Метка меняется раз в минуту: между открытиями файл берётся из кэша браузера.
         const stamp = force ? Date.now() : Math.floor(Date.now() / 60_000);
-        const resp = await fetch(`${CATALOG_BASE}index.json?t=${stamp}`, force ? { cache: 'no-store' } : {});
+        const resp = await fetch(`${CATALOG_BASE}index.json?t=${stamp}`, { signal: AbortSignal.timeout(15_000), ...(force ? { cache: 'no-store' } : {}) });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const index = await resp.json();
         c.index = { ...index, items: Array.isArray(index.items) ? index.items : [] };
         c.loadedAt = Date.now();
     } catch (error) {
-        c.error = error.message || String(error);
+        c.error = error?.name === 'TimeoutError' || /failed to fetch|load failed|networkerror/i.test(String(error?.message))
+            ? 'GitHub не отвечает — проверь интернет (или VPN) и нажми ⟳'
+            : error.message || String(error);
     } finally {
         c.loading = false;
         if (state.tab === 'catalog') render();
