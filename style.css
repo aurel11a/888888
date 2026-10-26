@@ -2929,9 +2929,14 @@ body.iig-actions-hidden .iig-img-actions {
     box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.35);
     overflow: hidden;
 }
-@media (min-width: 900px) {
+/* Компьютер: окно по центру и одного размера на всех вкладках — не прыгает при переключении. */
+@media (min-width: 700px) {
     .chamber-backdrop { align-items: center; }
-    .chamber-panel { border-radius: 16px; border-bottom: 1px solid var(--SmartThemeBorderColor); }
+    .chamber-panel {
+        height: min(82dvh, 760px);
+        border-radius: 16px;
+        border-bottom: 1px solid var(--SmartThemeBorderColor);
+    }
 }
 .chamber-head {
     display: flex;
@@ -3003,6 +3008,17 @@ body.iig-actions-hidden .iig-img-actions {
 .chamber-upload { cursor: pointer; }
 
 .chamber-chips, .chamber-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+/* Компьютер: категории одной лентой, листаются колесом мыши (полоса прокрутки скрыта). */
+@media (min-width: 700px) {
+    .chamber-chips {
+        flex-wrap: nowrap;
+        flex-shrink: 0;
+        overflow-x: auto;
+        scrollbar-width: none;
+    }
+    .chamber-chips::-webkit-scrollbar { display: none; }
+    .chamber-chip { flex-shrink: 0; }
+}
 .chamber-row .chamber-refresh { margin-left: auto; }
 .chamber-search { width: 100%; box-sizing: border-box; margin: 0; }
 .chamber-hint { margin: 0; opacity: 0.7; font-size: 0.85em; }

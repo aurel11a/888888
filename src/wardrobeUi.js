@@ -27,6 +27,7 @@ const state = {
     catalog: { index: null, loading: false, error: '', loadedAt: 0 },
     catalogGender: (() => { try { return localStorage.getItem('chamber_catalog_gender') === 'male' ? 'male' : 'female'; } catch (_e) { return 'female'; } })(),
     catalogQuery: '',
+    chipsScroll: 0,
     busy: new Set(),
 };
 let searchTimer = null;
@@ -106,7 +107,7 @@ async function render() {
         <button class="chamber-close" title="Закрыть"><i class="fa-solid fa-xmark"></i></button>`;
     head.querySelector('.chamber-close').addEventListener('click', closeSheet);
     for (const b of head.querySelectorAll('.chamber-tab'))
-        b.addEventListener('click', () => { state.tab = b.dataset.tab; state.filter = 'all'; state.page = 0; state.editingId = null; render(); });
+        b.addEventListener('click', () => { state.tab = b.dataset.tab; state.filter = 'all'; state.page = 0; state.chipsScroll = 0; state.editingId = null; render(); });
 
     if (state.tab === 'char' || state.tab === 'user') await renderSide(body, state.tab);
     else if (state.tab === 'fav') renderFavorites(body);
@@ -128,6 +129,17 @@ function categoryChips(items, current) {
 function bindChips(body) {
     for (const c of body.querySelectorAll('.chamber-chip'))
         c.addEventListener('click', () => { state.filter = c.dataset.cat; state.page = 0; render(); });
+    const row = body.querySelector('.chamber-chips');
+    if (!row) return;
+    // Лента не сбрасывается в начало после выбора категории.
+    row.scrollLeft = state.chipsScroll;
+    row.addEventListener('scroll', () => { state.chipsScroll = row.scrollLeft; }, { passive: true });
+    // Колесо мыши листает ленту вбок; если листать некуда — прокручивается шторка.
+    row.addEventListener('wheel', (e) => {
+        if (!e.deltaY || e.shiftKey || row.scrollWidth <= row.clientWidth) return;
+        row.scrollLeft += e.deltaY;
+        e.preventDefault();
+    }, { passive: false });
 }
 
 function pager(total) {
