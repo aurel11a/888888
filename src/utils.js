@@ -177,7 +177,7 @@ export async function convertDataUrlToPng(dataUrl) {
 
 // ----- Upload (via SillyTavern API) -----
 
-export async function saveImageToFile(dataUrl, debugMeta = {}) {
+export async function saveImageToFile(dataUrl, debugMeta = {}, { folder = '' } = {}) {
     const context = SillyTavern.getContext();
 
     let parsed;
@@ -208,8 +208,8 @@ export async function saveImageToFile(dataUrl, debugMeta = {}) {
     );
 
     // Get character name for subfolder
-    let charName = 'generated';
-    if (context.characterId !== undefined && context.characters?.[context.characterId]) {
+    let charName = folder || 'generated';
+    if (!folder && context.characterId !== undefined && context.characters?.[context.characterId]) {
         charName = context.characters[context.characterId].name || 'generated';
     }
 

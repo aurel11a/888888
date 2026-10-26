@@ -19,6 +19,7 @@ import { resolveActiveProvider } from './src/providers.js';
 import { initLightbox } from './src/lightbox.js';
 import { initImageActions } from './src/imageActions.js';
 import { initOutfitInjection } from './src/wardrobe.js';
+import { initWardrobeUi } from './src/wardrobeUi.js';
 
 // sillyimages обрабатывает те же теги и использует те же id элементов настроек.
 async function warnIfSillyimagesActive() {
@@ -52,6 +53,8 @@ async function warnIfSillyimagesActive() {
         warnIfSillyimagesActive();
         createSettingsUI();
         initOutfitInjection();
+        // Кнопка гардероба у поля ввода; шторка создаётся только при открытии.
+        initWardrobeUi();
         // Add buttons to any messages already in chat.
         addButtonsToExistingMessages();
         // Lightbox: делегированный click-handler на #chat, оверлей один на страницу.
