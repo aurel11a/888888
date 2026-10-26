@@ -3040,8 +3040,20 @@ body.iig-actions-hidden .iig-img-actions {
     min-width: 0;
 }
 .chamber-card.on { border-color: var(--SmartThemeQuoteColor); box-shadow: 0 0 0 1px var(--SmartThemeQuoteColor); }
-.chamber-card-img { position: relative; aspect-ratio: 3 / 4; cursor: pointer; background: rgba(127, 127, 127, 0.12); }
-.chamber-card-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* Рамка 3:4 держит размер сама, картинка лежит поверх неё: темы с img { height: auto } карточку не растянут. */
+.chamber-card-img { position: relative; flex-shrink: 0; aspect-ratio: 3 / 4; overflow: hidden; cursor: pointer; background: rgba(127, 127, 127, 0.12); }
+.chamber-card-img img {
+    position: absolute !important;
+    top: 0;
+    left: 0;
+    width: 100% !important;
+    height: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    margin: 0 !important;
+    object-fit: cover !important;
+    display: block;
+}
 .chamber-badge, .chamber-cat {
     position: absolute;
     top: 6px;
