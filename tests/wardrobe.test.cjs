@@ -64,6 +64,7 @@ async function loadExtension() {
         tavern, prompts, fetched, settings,
         wardrobe: moduleFor(path.join(sourceDir, 'wardrobe.js')).namespace,
         references: moduleFor(path.join(sourceDir, 'references.js')).namespace,
+        settingsModule,
     };
 }
 
@@ -155,4 +156,26 @@ test('chat text says what is worn, for character and user', async () => {
     wardrobe.setWornOutfit('user', ME, null);
     await wardrobe.updateOutfitInjection();
     assert.equal(prompts.chamber_outfits, '');
+});
+
+test('style picture: kept on the style and sent only while the style is active', async () => {
+    const { references, settingsModule, settings, fetched } = await loadExtension();
+    settings.styles = [{ id: 's1', name: 'Watercolor', value: 'watercolor', imagePath: '/user/images/styles/w.jpg' }, { id: 's2', name: 'Plain', value: 'flat' }];
+    settings.activeStyleId = 's1';
+    settingsModule.ensureStyles(settings);
+    assert.equal(settings.styles[0].imagePath, '/user/images/styles/w.jpg', 'картинка не теряется при нормализации');
+    assert.equal('imagePath' in settings.styles[1], false);
+
+    const ref = await references.collectStyleReference('base64', settings);
+    assert.equal(references.getReferenceSource(ref), 'style');
+    assert.match(references.getReferenceDescription(ref), /Art style reference/);
+    assert.ok(fetched.includes('/user/images/styles/w.jpg'));
+
+    settings.activeStyleId = 's2';
+    assert.equal(await references.collectStyleReference('base64', settings), null);
+    settings.activeStyleId = '';
+    assert.equal(await references.collectStyleReference('base64', settings), null);
+
+    settingsModule.updateStyle('s1', { imagePath: '' });
+    assert.equal('imagePath' in settings.styles[0], false, '«Убрать» стирает поле');
 });

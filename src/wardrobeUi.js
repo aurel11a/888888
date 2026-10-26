@@ -7,7 +7,7 @@
 
 import { getSettings } from './settings.js';
 import { getCurrentCharacterReferenceKey } from './references.js';
-import { saveImageToFile, normalizeStoredImagePath, sanitizeForHtml as san } from './utils.js';
+import { saveCompressedImage, sanitizeForHtml as san } from './utils.js';
 import {
     OUTFIT_CATEGORIES, outfitCategory, sideKey, getOutfits, getWornOutfit, setWornOutfit,
     addOutfit, updateOutfit, removeOutfit, getFavorites, isFavorite, toggleFavorite, wearFavorite,
@@ -228,21 +228,8 @@ function mountEditor(body, kind, key, item) {
     ed.querySelector('.chamber-ed-name').focus();
 }
 
-// Картинка → JPEG не больше maxSide (белый фон вместо прозрачности) → файл в /user/images/wardrobe/.
-async function storeImage(source, label) {
-    const bitmap = await createImageBitmap(source);
-    const maxSide = 1024;
-    const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.round(bitmap.width * scale);
-    canvas.height = Math.round(bitmap.height * scale);
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    bitmap.close?.();
-    const path = await saveImageToFile(canvas.toDataURL('image/jpeg', 0.88), { mode: 'wardrobe', refName: label }, { folder: IMAGE_FOLDER });
-    return normalizeStoredImagePath(path);
+function storeImage(source, label) {
+    return saveCompressedImage(source, { folder: IMAGE_FOLDER, label });
 }
 
 async function uploadOutfit(e, kind, key) {

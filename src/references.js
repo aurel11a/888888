@@ -18,6 +18,7 @@ import {
     normalizeImageContextCount,
     normalizeGroupName,
     MAX_ADDITIONAL_REFERENCES,
+    getActiveStyle,
 } from './settings.js';
 import {
     imageUrlToBase64,
@@ -145,6 +146,16 @@ export function characterAvatarUrl(character) {
 export function userAvatarUrl(avatarFile) {
     const value = String(avatarFile || '').trim();
     return value ? `/User Avatars/${encodeURIComponent(value)}` : '';
+}
+
+export const STYLE_REFERENCE_DESCRIPTION = 'Art style reference: match its rendering technique, color palette, lighting and linework. Do not copy its characters, composition or content.';
+
+/** Картинка-образец активного стиля как реф (или null). */
+export async function collectStyleReference(format = 'base64', settings = getSettings()) {
+    const imagePath = normalizeStoredImagePath(getActiveStyle(settings)?.imagePath);
+    if (!imagePath) return null;
+    const image = format === 'dataUrl' ? await imageUrlToDataUrl(imagePath) : await imageUrlToBase64(imagePath);
+    return image ? makeReferenceObject(image, STYLE_REFERENCE_DESCRIPTION, 'style') : null;
 }
 
 export function makeReferenceObject(image, description = '', source = '') {

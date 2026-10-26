@@ -33,6 +33,7 @@ import { NOVELAI_MODELS, buildNovelAIParameters, validateNovelAIParameters, spli
 import { t } from './i18n.js';
 import {
     collectCharacterLibraryReferences,
+    collectStyleReference,
     collectPreviousContextReferences,
     makeReferenceObject,
     getReferenceImage,
@@ -700,6 +701,8 @@ async function collectImageEditReferences({ messageId, matchedAdditionalRefs = [
         ? await collectCharacterLibraryReferences('user', format, settings)
         : [];
     appendAvatarReferenceGroups(refs, [characterRefs, userRefs]);
+    const styleRef = await collectStyleReference(format, settings);
+    if (styleRef && refs.length < maxRefs) refs.push(styleRef);
 
     for (const ref of matchedAdditionalRefs) {
         if (refs.length >= maxRefs) break;
@@ -1060,6 +1063,8 @@ export class GeminiProvider extends Provider {
             ? await collectCharacterLibraryReferences('char', 'base64', settings)
             : [];
         appendAvatarReferenceGroups(refs, [userRefs, characterRefs]);
+        const styleRef = await collectStyleReference('base64', settings);
+        if (styleRef && refs.length < maxRefs) refs.push(styleRef);
 
         for (const ref of matchedAdditionalRefs) {
             if (refs.length >= maxRefs) break;
@@ -1338,6 +1343,8 @@ export class OpenRouterProvider extends Provider {
             ? await collectCharacterLibraryReferences('char', 'dataUrl', settings)
             : [];
         appendAvatarReferenceGroups(refs, [userRefs, characterRefs]);
+        const styleRef = await collectStyleReference('dataUrl', settings);
+        if (styleRef && refs.length < maxRefs) refs.push(styleRef);
 
         for (const ref of matchedAdditionalRefs) {
             if (refs.length >= maxRefs) break;
@@ -1818,6 +1825,8 @@ export class NaisteraProvider extends Provider {
             ? await collectCharacterLibraryReferences('char', 'dataUrl', settings)
             : [];
         appendAvatarReferenceGroups(refs, [userRefs, characterRefs]);
+        const styleRef = await collectStyleReference('dataUrl', settings);
+        if (styleRef) refs.push(styleRef);
 
         for (const ref of matchedAdditionalRefs) {
             const imagePath = normalizeStoredImagePath(ref.imagePath);

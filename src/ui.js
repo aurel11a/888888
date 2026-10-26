@@ -51,6 +51,7 @@ import {
     normalizeStoredImagePath,
     readFileAsDataUrl,
     saveImageToFile,
+    saveCompressedImage,
     sanitizeForHtml,
 } from './utils.js';
 import {
@@ -691,6 +692,7 @@ function buildStyleEditorHtml(settings = getSettings()) {
                 <span>${getStyleLibraryLabels().name}</span>
                 <textarea id="iig_style_value" class="text_pole iig-settings-textarea" rows="6" placeholder="${styleLibraryTab === 'negativePrompts' ? 'lowres, bad anatomy, blurry' : 'masterpiece, cinematic lighting, painterly'}">${sanitizeForHtml(selectedStyle.value)}</textarea>
             </label>
+            ${styleLibraryTab === 'styles' ? buildStyleImageFieldHtml(selectedStyle) : ''}
             <div class="iig-style-editor-actions">
                 <button type="button" id="iig_style_toggle_active" class="menu_button iig-button-inline">
                     <i class="fa-solid ${isActive ? 'fa-ban' : 'fa-circle-check'}"></i>
@@ -702,6 +704,28 @@ function buildStyleEditorHtml(settings = getSettings()) {
             </div>
         </div>
     `;
+}
+
+// Картинка-образец стиля: уходит рефом в генерацию у моделей, которые принимают рефы.
+function buildStyleImageFieldHtml(style) {
+    const imagePath = normalizeStoredImagePath(style.imagePath);
+    return `
+            <div class="iig-style-field iig-style-image-field">
+                <span>Картинка-образец стиля</span>
+                <div class="iig-style-image-row">
+                    ${imagePath
+                        ? `<img class="iig-style-image-thumb" src="${sanitizeForHtml(imagePath)}" alt="" loading="lazy" decoding="async">`
+                        : '<div class="iig-style-image-thumb iig-style-image-empty"><i class="fa-regular fa-image"></i></div>'}
+                    <div class="iig-style-image-actions">
+                        <label class="menu_button iig-button-inline iig-style-image-upload">
+                            <i class="fa-solid fa-upload"></i><span>${imagePath ? 'Заменить' : 'Загрузить'}</span>
+                            <input type="file" id="iig_style_image_input" accept="image/*" hidden>
+                        </label>
+                        ${imagePath ? '<button type="button" id="iig_style_image_remove" class="menu_button iig-button-inline"><i class="fa-solid fa-xmark"></i><span>Убрать</span></button>' : ''}
+                        <small>Модель возьмёт с неё технику, палитру и свет, но не сюжет.</small>
+                    </div>
+                </div>
+            </div>`;
 }
 
 function filterStyleList() {
@@ -1998,7 +2022,7 @@ function duplicateStyleById(styleId, settings) {
     const source = ensureStyles(settings, styleLibraryTab).find((style) => style.id === styleId);
     if (!source) return;
     const copy = createStyle(t`Copy of ${source.name}`, styleLibraryTab);
-    updateStyle(copy.id, { value: source.value }, styleLibraryTab);
+    updateStyle(copy.id, { value: source.value, imagePath: source.imagePath || '' }, styleLibraryTab);
     selectedStyleId = copy.id;
     saveSettings();
     renderStyleSettings();
@@ -2118,8 +2142,31 @@ function bindStylesSectionEvents(settings) {
             duplicateStyleById(selectedStyle.id, settings);
             return;
         }
+        if (target.closest('#iig_style_image_remove')) {
+            updateStyle(selectedStyle.id, { imagePath: '' }, styleLibraryTab);
+            saveSettings();
+            renderSelectedStyleEditor(settings);
+            return;
+        }
         if (target.closest('#iig_style_remove')) {
             await deleteStyleById(selectedStyle.id, settings);
+        }
+    });
+
+    document.getElementById('iig_style_editor')?.addEventListener('change', async (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLInputElement) || target.id !== 'iig_style_image_input') return;
+        const file = target.files?.[0];
+        const style = getSelectedStyle(settings);
+        target.value = '';
+        if (!file || !style) return;
+        try {
+            const imagePath = await saveCompressedImage(file, { folder: 'styles', label: style.name });
+            updateStyle(style.id, { imagePath }, styleLibraryTab);
+            saveSettings();
+            renderSelectedStyleEditor(settings);
+        } catch (error) {
+            toastr.error(`Не удалось загрузить картинку: ${error.message || error}`, 'Стиль');
         }
     });
 }

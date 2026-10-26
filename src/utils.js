@@ -177,6 +177,22 @@ export async function convertDataUrlToPng(dataUrl) {
 
 // ----- Upload (via SillyTavern API) -----
 
+/** Картинка (Blob/File) → JPEG не больше maxSide, белый фон вместо прозрачности → файл в /user/images/<folder>/. */
+export async function saveCompressedImage(source, { folder, label = '', maxSide = 1024 } = {}) {
+    const bitmap = await createImageBitmap(source);
+    const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close?.();
+    const path = await saveImageToFile(canvas.toDataURL('image/jpeg', 0.88), { mode: folder, refName: label }, { folder });
+    return normalizeStoredImagePath(path);
+}
+
 export async function saveImageToFile(dataUrl, debugMeta = {}, { folder = '' } = {}) {
     const context = SillyTavern.getContext();
 

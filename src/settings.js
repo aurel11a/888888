@@ -786,6 +786,8 @@ export function ensureStyles(settings = getSettings(), kind = 'styles') {
         id: String(style?.id || `iig-style-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`),
         name: String(style?.name || '').trim() || promptLibraryDefaultName(kind, index),
         value: String(style?.value || '').trim(),
+        // Картинка-образец стиля: уходит в генерацию рефом (у моделей, которые принимают рефы).
+        ...(kind === 'styles' && style?.imagePath ? { imagePath: String(style.imagePath).trim() } : {}),
     }));
 
     const activeKey = getPromptLibraryActiveKey(kind);
@@ -825,6 +827,10 @@ export function updateStyle(styleId, patch, kind = 'styles') {
     }
     if (Object.hasOwn(patch, 'value')) {
         style.value = String(patch.value || '').trim();
+    }
+    if (Object.hasOwn(patch, 'imagePath')) {
+        if (patch.imagePath) style.imagePath = String(patch.imagePath).trim();
+        else delete style.imagePath;
     }
 
     return style;
