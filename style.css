@@ -396,7 +396,10 @@
     justify-content: center;
     pointer-events: none;
     opacity: 0;
-    transition: opacity 0.22s ease;
+    /* Закрытый просмотрщик полностью скрыт: при одной лишь opacity: 0 iPhone продолжал
+       размывать весь экран под ним (backdrop-filter) и сильно грелся даже в простое. */
+    visibility: hidden;
+    transition: opacity 0.22s ease, visibility 0s linear 0.22s;
     /* overflow hidden so zoomed image doesn't scroll the page */
     overflow: hidden;
 }
@@ -404,12 +407,17 @@
 .iig-lightbox.open {
     pointer-events: auto;
     opacity: 1;
+    visibility: visible;
+    transition: opacity 0.22s ease, visibility 0s linear 0s;
 }
 
 .iig-lightbox-backdrop {
     position: absolute;
     inset: 0;
     background: rgba(0, 0, 0, 0.88);
+}
+/* Размытие — только пока просмотрщик открыт. */
+.iig-lightbox.open .iig-lightbox-backdrop {
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
 }
@@ -1330,7 +1338,7 @@
     align-items: center;
     justify-content: center;
     font-size: 12px;
-    backdrop-filter: blur(3px);
+    /* Без backdrop-filter: на телефоне кнопки видны всегда, по три на картинку. */
     touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
     transition: background 0.15s, transform 0.1s;
