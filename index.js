@@ -1305,15 +1305,11 @@ function getSettings() {
     return context.extensionSettings[MODULE_NAME];
 }
 
+// Только отложенное сохранение ST: оно склеивает частые изменения в одно. Немедленное
+// window.saveSettings() каждый раз упаковывало и отправляло все настройки ST (мегабайты).
 function saveSettings() {
-    const context = SillyTavern.getContext();
     syncActiveConnectionProfile();
-    if (typeof window.saveSettings === 'function') {
-        try { window.saveSettings(); } catch(e) { context.saveSettingsDebounced(); }
-    } else {
-        context.saveSettingsDebounced();
-    }
-    persistRefsToLocalStorage();
+    SillyTavern.getContext().saveSettingsDebounced();
 }
 
 function saveSettingsNow() { saveSettings(); }
@@ -1445,38 +1441,31 @@ window._iigConnectionProfiles = {
     load: (id) => { const p = loadConnectionProfile(id); if (p) applyConnectionFieldsToUI(); return p; },
 };
 
-const LS_KEY = 'iig_npc_refs_v3';
+// Раньше список НПС дублировался в памяти браузера и при каждом запуске перезаписывал
+// данные с сервера (из-за этого телефон и компьютер видели разных НПС). Теперь копия
+// используется один раз — если на сервере НПС нет, а в браузере остались, — и стирается.
+const LEGACY_NPC_LS_KEY = 'iig_npc_refs_v3';
+let legacyNpcBackupChecked = false;
 
-function persistRefsToLocalStorage() {
+function migrateLegacyNpcBackup() {
+    if (legacyNpcBackupChecked) return;
+    legacyNpcBackupChecked = true;
     try {
-        const settings = getSettings();
-        const refs = JSON.parse(JSON.stringify(settings.npcReferences || {}));
-        localStorage.setItem(LS_KEY, JSON.stringify(refs));
-    } catch(e) { iigLog('WARN', 'persistRefsToLocalStorage failed:', e.message); }
-}
-
-function restoreRefsFromLocalStorage() {
-    try {
-        const raw = localStorage.getItem(LS_KEY);
+        const raw = localStorage.getItem(LEGACY_NPC_LS_KEY);
         if (!raw) return;
-        const backup = JSON.parse(raw);
-        if (!backup || typeof backup !== 'object') return;
         const settings = getSettings();
-        settings.npcReferences = backup;
-    } catch(e) { iigLog('WARN', 'restoreRefsFromLocalStorage failed:', e.message); }
-}
-
-function initMobileSaveListeners() {
-    const flush = () => {
-        persistRefsToLocalStorage();
-        try { SillyTavern.getContext().saveSettingsDebounced(); } catch(e) {}
-        if (typeof window.saveSettings === 'function') { try { window.saveSettings(); } catch(e) {} }
-    };
-    document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'hidden') flush();
-    });
-    window.addEventListener('pagehide', flush);
-    window.addEventListener('beforeunload', flush);
+        if (!Array.isArray(settings.npcReferences) || settings.npcReferences.length === 0) {
+            const backup = JSON.parse(raw);
+            const list = Array.isArray(backup) ? backup : Object.values(backup || {});
+            const npcs = list.filter(n => n && n.name);
+            if (npcs.length) {
+                settings.npcReferences = npcs;
+                saveSettings();
+                iigLog('INFO', `NPC restored from old browser backup: ${npcs.length}`);
+            }
+        }
+        localStorage.removeItem(LEGACY_NPC_LS_KEY);
+    } catch (e) { iigLog('WARN', 'Legacy NPC backup migration failed:', e.message); }
 }
 
 function getCurrentCharacterRefs() {
@@ -4602,12 +4591,11 @@ async function warnIfSillyimagesActive() {
 
     context.eventSource.on(context.event_types.APP_READY, () => {
         warnIfSillyimagesActive();
-        restoreRefsFromLocalStorage();
+        migrateLegacyNpcBackup();
         createSettingsUI();
         addButtonsToExistingMessages();
         initLightbox();
         updateHeaderStatusDot();
-        initMobileSaveListeners();
         initRegenObserver();
         setTimeout(() => { if (window.sillyWardrobe?.refreshDisplay) window.sillyWardrobe.refreshDisplay(); }, 500);
         iigLog('INFO', 'IIG + Wardrobe extension loaded');
@@ -4615,7 +4603,6 @@ async function warnIfSillyimagesActive() {
 
     context.eventSource.on(context.event_types.CHAT_CHANGED, () => {
         setTimeout(() => {
-            restoreRefsFromLocalStorage();
             addButtonsToExistingMessages();
             renderRefSlots();
             if (window.sillyWardrobe?.refreshDisplay) window.sillyWardrobe.refreshDisplay();
@@ -4738,21 +4725,6 @@ async function warnIfSillyimagesActive() {
         const ctx = SillyTavern.getContext();
         const s = ctx.extensionSettings[MODULE_NAME];
         if (!s) return { npcReferences: [] };
-        // Merge localStorage backup if settings refs are empty but backup has data
-        if ((!s.npcReferences || s.npcReferences.length === 0)) {
-            try {
-                const raw = localStorage.getItem('iig_npc_refs_v3');
-                if (raw) {
-                    const backup = JSON.parse(raw);
-                    if (Array.isArray(backup) && backup.length > 0) s.npcReferences = backup;
-                    else if (backup && typeof backup === 'object') {
-                        // older format might be an object
-                        const arr = Object.values(backup).filter(v => v && v.name);
-                        if (arr.length > 0) s.npcReferences = arr;
-                    }
-                }
-            } catch(e) {}
-        }
         if (!Array.isArray(s.npcReferences)) s.npcReferences = [];
         return s;
     }
@@ -5954,10 +5926,7 @@ async function warnIfSillyimagesActive() {
     const ctx = () => SillyTavern.getContext();
     const iig = () => ctx().extensionSettings[MODULE_NAME] || null;
     const sw  = () => ctx().extensionSettings['silly_wardrobe']   || null;
-    const saveAll = () => {
-        ctx().saveSettingsDebounced();
-        try { const s=iig(); if(s) localStorage.setItem('iig_npc_refs_v3', JSON.stringify(s.npcReferences||[])); } catch(e){}
-    };
+    const saveAll = () => { ctx().saveSettingsDebounced(); };
 
     /* ── panel lifecycle ── */
     function qsClose() {
