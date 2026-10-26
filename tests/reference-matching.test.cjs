@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 const vm = require('node:vm');
 const { test } = require('node:test');
 
@@ -35,7 +36,11 @@ async function loadExtension({ respond } = {}) {
                 this.setExport('t', (parts, ...values) => String.raw({ raw: parts }, ...values));
                 this.setExport('translate', (value) => value);
             }, { context, identifier: filename })
-            : new vm.SourceTextModule(readFileSync(filename, 'utf8'), { context, identifier: filename });
+            : new vm.SourceTextModule(readFileSync(filename, 'utf8'), {
+                context,
+                identifier: filename,
+                initializeImportMeta(meta) { meta.url = pathToFileURL(filename).href; },
+            });
         modules.set(filename, module);
         return module;
     }

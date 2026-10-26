@@ -2,7 +2,7 @@
  * Thin wrapper поверх встроенного ST i18n (`/public/scripts/i18n.js`).
  *
  * Относительный путь учитывает расположение расширения:
- *   /scripts/extensions/third-party/sillyimages/src/i18n.js → /scripts/i18n.js
+ *   <папка расширения>/src/i18n.js → /scripts/i18n.js
  *   = ../../../../i18n.js
  *
  * Импортируется из модулей расширения вместо прямого пути, чтобы:

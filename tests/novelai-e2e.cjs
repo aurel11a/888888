@@ -8,7 +8,7 @@ const { chromium } = require('playwright');
 // Failures covered: unwanted image attachments, description switches, tab cross-talk, lost focus/scroll,
 // missing profile fields, wrong native payload/snapshot and narrow-window overflow.
 const root = path.resolve(__dirname, '..');
-const prefix = '/scripts/extensions/third-party/sillyimages/';
+const prefix = '/scripts/extensions/third-party/vish/';
 const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6JQAAAABJRU5ErkJggg==';
 const host = `<!doctype html><html><head><link rel="stylesheet" href="${prefix}style.css">
 <style>:root{--SmartThemeQuoteColor:#c7b89f;--SmartThemeBodyColor:#eee;--SmartThemeBorderColor:#666;--SmartThemeBlurTintColor:#302c35}body{background:#302c35;color:#eee;font:16px sans-serif;margin:10px}*{box-sizing:border-box}.menu_button{background:#444;color:#eee;border:0;padding:7px;border-radius:5px;cursor:pointer}.text_pole,select{background:#27232c;color:#eee;border:1px solid #666;border-radius:5px;padding:6px;min-width:0}textarea{resize:vertical}.flex-row{display:flex;gap:8px;align-items:center}.flex1{flex:1}.checkbox_label{display:flex;gap:8px;align-items:center}input[type=checkbox]{width:16px;height:16px}.inline-drawer-content{display:block}</style></head>

@@ -8,7 +8,7 @@ const { chromium } = require('playwright');
 // values, provider isolation, profiles and desktop/mobile layout. Direct Medium
 // also covers fixed UC/character negatives, request-only overrides and snapshots.
 const root = path.resolve(__dirname, '..');
-const prefix = '/scripts/extensions/third-party/sillyimages/';
+const prefix = '/scripts/extensions/third-party/vish/';
 const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6JQAAAABJRU5ErkJggg==';
 const samplers = ['k_euler_ancestral', 'k_euler', 'k_dpmpp_2m', 'k_dpmpp_2m_sde', 'k_dpmpp_2s_ancestral', 'k_dpmpp_sde'];
 const parameters = (max, medium = false) => ({

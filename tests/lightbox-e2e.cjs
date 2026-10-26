@@ -8,7 +8,7 @@ const { chromium, webkit } = require('playwright');
 // lost scroll ownership, invisible modal hit targets, pending wheel/tap/RAF work,
 // captured touches after close, nested modal isolation and stale async deletion.
 const root = path.resolve(__dirname, '..');
-const prefix = '/scripts/extensions/third-party/sillyimages/';
+const prefix = '/scripts/extensions/third-party/vish/';
 const picture = '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1600"><rect width="1200" height="1600" fill="#426477"/><circle cx="600" cy="800" r="300" fill="#dac297"/></svg>';
 const image = (id, attrs = '') => `<img id="${id}" alt="${id}" src="/image.svg" ${attrs}>`;
 const host = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="${prefix}style.css"><style>

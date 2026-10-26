@@ -7,7 +7,10 @@
 
 import { t } from './i18n.js';
 
-export const MODULE_NAME = 'inline_image_gen';
+export const MODULE_NAME = 'chamber_gen';
+// Откуда один раз копируются настройки при первом запуске: сначала vish (main),
+// потом sillyimages. Сами старые ключи не меняются — на main можно вернуться.
+export const LEGACY_MODULE_NAMES = ['vish_image_gen', 'inline_image_gen'];
 
 // Limits / глобальные константы размерностей.
 export const MAX_CONTEXT_IMAGES = 3;
@@ -626,7 +629,10 @@ export function getSettings() {
     const context = SillyTavern.getContext();
 
     if (!context.extensionSettings[MODULE_NAME]) {
-        context.extensionSettings[MODULE_NAME] = structuredClone(defaultSettings);
+        const legacyKey = LEGACY_MODULE_NAMES.find(key => context.extensionSettings[key] && typeof context.extensionSettings[key] === 'object');
+        context.extensionSettings[MODULE_NAME] = legacyKey
+            ? structuredClone(context.extensionSettings[legacyKey])
+            : structuredClone(defaultSettings);
     }
 
     const characterReferencesMigrated = migrateCharacterReferenceSettings(context.extensionSettings[MODULE_NAME]);

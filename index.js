@@ -19,6 +19,20 @@ import { resolveActiveProvider } from './src/providers.js';
 import { initLightbox } from './src/lightbox.js';
 import { initImageActions } from './src/imageActions.js';
 
+// sillyimages обрабатывает те же теги и использует те же id элементов настроек.
+async function warnIfSillyimagesActive() {
+    const disabled = SillyTavern.getContext().extensionSettings?.disabledExtensions || [];
+    if (disabled.includes('third-party/sillyimages')) return;
+    try {
+        const response = await fetch('/scripts/extensions/third-party/sillyimages/manifest.json', { method: 'HEAD' });
+        if (!response.ok) return;
+    } catch (_error) {
+        return;
+    }
+    toastr.warning('Включены и Chamber of Secrets, и sillyimages — картинки будут генерироваться дважды. Отключи sillyimages в Extensions.',
+        'Chamber of Secrets', { timeOut: 0, extendedTimeOut: 0 });
+}
+
 (function init() {
     const context = SillyTavern.getContext();
 
@@ -34,6 +48,7 @@ import { initImageActions } from './src/imageActions.js';
 
     // Create settings UI when app is ready.
     context.eventSource.on(context.event_types.APP_READY, () => {
+        warnIfSillyimagesActive();
         createSettingsUI();
         // Add buttons to any messages already in chat.
         addButtonsToExistingMessages();

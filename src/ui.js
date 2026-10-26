@@ -80,7 +80,7 @@ import { NOVELAI_NUMERIC_FIELDS, NOVELAI_SAMPLERS, NOVELAI_NOISE_SCHEDULES, NOVE
 import { applyImageActionsStyle } from './imageActions.js';
 import { t, translate } from './i18n.js';
 import { buildCharacterLibraryBodyHtml, bindCharacterLibraryEvents } from './characterLibraryUi.js';
-// Относительный путь: /scripts/extensions/third-party/sillyimages/src/ui.js → /scripts/popup.js
+// Относительный путь: <папка расширения>/src/ui.js → /scripts/popup.js
 import { Popup } from '../../../../popup.js';
 
 // ----- Section wrapper -----
@@ -2876,7 +2876,7 @@ export function createSettingsUI() {
     const html = `
         <div id="iig_settings_root" class="inline-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
-                <b>${t`Image Generation`}</b>
+                <b>Chamber of Secrets</b>
                 <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content">

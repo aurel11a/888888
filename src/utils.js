@@ -438,8 +438,10 @@ export function abortableDelay(ms, signal = null) {
 
 // ----- Error / UI asset paths -----
 
-export const ERROR_IMAGE_PATH = '/scripts/extensions/third-party/sillyimages/error.svg';
-export const STOPPED_IMAGE_PATH = '/scripts/extensions/third-party/sillyimages/stopped.svg';
+// Пути от расположения модуля: расширение работает из любой папки.
+export const EXTENSION_BASE_PATH = new URL('../', import.meta.url).pathname;
+export const ERROR_IMAGE_PATH = `${EXTENSION_BASE_PATH}error.svg`;
+export const STOPPED_IMAGE_PATH = `${EXTENSION_BASE_PATH}stopped.svg`;
 
 // ----- Provider error -----
 
