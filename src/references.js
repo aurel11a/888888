@@ -301,6 +301,7 @@ export function setTemporaryCharacterPrimary(kind, key, itemId, settings = getSe
 }
 
 export function recordCharacterGeneration(imagePath, prompt = '', settings = getSettings()) {
+    if (/^https?:\/\//i.test(String(imagePath || ''))) return null; // remote URL, not a stored local file
     const normalizedPath = normalizeStoredImagePath(imagePath);
     const key = getCurrentCharacterReferenceKey();
     if (!normalizedPath || key === 'no-character') return null;

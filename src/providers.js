@@ -61,6 +61,11 @@ function appendAvatarReferenceGroups(target, groups) {
  */
 export function getActiveProviderMaxReferences(settings = getSettings()) {
     const apiType = settings.apiType;
+    if (apiType === 'altrouter' || apiType === 'closerouter') {
+        const routerLimit = getProviderById(apiType)?.getModelReferenceLimit?.(settings);
+        if (routerLimit != null) return routerLimit;
+        return getGeminiCapabilities(String(settings.model).replace(/^google\//, '')).maxReferences;
+    }
     if (apiType === 'xai') {
         return 3;
     }
@@ -2404,6 +2409,328 @@ export class NovelAIProvider extends Provider {
 
 // ----- Registry -----
 
+/** Gemini image gateways use Images API, not Google's native or chat API. */
+export class GeminiImageRouterProvider extends Provider {
+    constructor(id, name) {
+        super();
+        this.routerId = id;
+        this.routerName = name;
+    }
+
+    get id() { return this.routerId; }
+    get displayName() { return this.routerName; }
+    get capabilities() { return { ...super.capabilities, referencesFormat: 'dataUrl' }; }
+
+    isSupportedModel(model) {
+        return /^(?:google\/)?(?:nano-banana[^/]*|gemini-[^/]*(?:image|nano-banana)[^/]*)$/i.test(String(model || ''));
+    }
+
+    validate(settings) {
+        const errors = [];
+        if (!settings.apiKey) errors.push(t`API key is not configured`);
+        if (settings.model && !this.isSupportedModel(settings.model)) errors.push('Select a Gemini Image / Nano Banana model.');
+        return errors;
+    }
+
+    supportsReferences(settings) { return this.isSupportedModel(settings.model); }
+
+    getModelReferenceLimit(settings) {
+        if (this.id !== 'closerouter' || !this.mediaCatalog) return null;
+        const limits = this.mediaCatalog.filter(entry => entry.model === settings.model).flatMap(entry =>
+            (entry.operations || []).flatMap(op => (op.input_image_fields || []).map(field => {
+                const rule = op.input_schema?.properties?.[field];
+                return rule?.type === 'array' ? (rule.maxItems || MAX_GENERATION_REFERENCE_IMAGES) : 1;
+            })),
+        );
+        return limits.length ? Math.max(...limits) : 0;
+    }
+
+    /**
+     * AltRouter publishes tunable parameters per model in GET /v1/models
+     * (`params`: key/type/options). When the catalog lists resolution options,
+     * they are the source of truth. Otherwise the router accepts 1K|2K|4K on
+     * its own and picks the variant, so do not lock the UI to 1K.
+     */
+    getCatalogResolutions(model) {
+        if (this.id === 'closerouter') {
+            // CloseRouter lists resolution enums per operation in /media/models.
+            const found = (this.mediaCatalog || []).filter(entry => entry.model === model).flatMap(entry =>
+                (entry.operations || []).flatMap(op => op.input_schema?.properties?.resolution?.enum || []),
+            ).map(value => String(value).toUpperCase()).filter(value => ['1K', '2K', '4K'].includes(value));
+            return [...new Set(found)];
+        }
+        const entry = this.modelCatalogById?.get(model) || this.modelCatalogById?.get(String(model).replace(/^google\//, ''));
+        const param = (Array.isArray(entry?.params) ? entry.params : []).find(p => /^(?:resolution|image_size|imagesize)$/i.test(String(p?.key || p?.name || '')));
+        const raw = param?.options ?? param?.values ?? param?.enum ?? [];
+        const found = (Array.isArray(raw) ? raw : []).map(o => String(o?.value ?? o?.id ?? o).toUpperCase()).filter(o => ['1K', '2K', '4K'].includes(o));
+        return [...new Set(found)];
+    }
+
+    getImageResolutions(settings) {
+        const model = settings.model.replace(/^google\//, '');
+        const fromCatalog = this.getCatalogResolutions(settings.model);
+        if (fromCatalog.length) return fromCatalog;
+        if (this.id === 'closerouter') {
+            // Catalog not loaded or lists no resolution control: do not lock the UI.
+            // prepareCloseRequest still checks the real route before any quote or paid request.
+            return ['1K', '2K', '4K'];
+        }
+        if (this.id === 'altrouter') {
+            if (model === 'nano-banana-pro') return ['2K', '4K'];
+            if (model.includes('flash-lite-image') || model === 'nano-banana-2-lite') return ['1K'];
+            return ['1K', '2K', '4K'];
+        }
+        if (model.includes('flash-lite-image') || model === 'nano-banana-2-lite') return ['1K'];
+        return getGeminiCapabilities(model).imageSizes?.filter(size => size !== '512') || [];
+    }
+
+    async collectReferences(context) {
+        return collectImageEditReferences(context, getActiveProviderMaxReferences(getSettings()), 'dataUrl');
+    }
+
+    baseUrl(settings) {
+        let base = getEffectiveEndpoint(settings).replace(/\/+$/, '');
+        // Raw URLs still need a service root for model discovery and polling.
+        base = base.replace(/\/(?:media\/models|models|images\/(?:generations|edits))$/, '');
+        return base.endsWith('/v1') ? base : `${base}/v1`;
+    }
+
+    async request(url, init = {}, timeout = 30000, signal = null) {
+        // AltRouter does not allow browser origins. Use only the user's own
+        // SillyTavern server, never a public CORS relay carrying an API key.
+        const target = this.id === 'altrouter' ? `/proxy/${url}` : url;
+        const response = await fetchWithTimeout(target, init, timeout, signal);
+        if (this.id === 'altrouter' && response.status === 404) {
+            const message = await response.clone().text();
+            if (message.includes('CORS proxy is disabled')) {
+                throw new ProviderError({ message: 'AltRouter: enableCorsProxy must be enabled in SillyTavern config.yaml, then restart SillyTavern.', code: 'proxy_disabled', retryable: false, providerId: this.id });
+            }
+        }
+        return response;
+    }
+
+    /**
+     * AltRouter re-hosts results on its CDN and returns `data[0].url` (the
+     * documented default), even when b64_json was requested. The rest of the
+     * pipeline (saveImageToFile) only accepts data URLs, so an http(s) result
+     * has to be downloaded here. For AltRouter this goes through the user's own
+     * SillyTavern /proxy, because the CDN is not guaranteed to send CORS headers.
+     * No API key is attached to the CDN request.
+     */
+    async resolveImageUrl(value, signal) {
+        if (typeof value !== 'string' || !/^https?:\/\//i.test(value)) return value;
+        // Try the SillyTavern proxy first (AltRouter), then a direct browser fetch.
+        // If neither works, hand the remote URL back: the pipeline can still show
+        // it in the chat, which is better than losing a paid generation.
+        const attempts = this.id === 'altrouter'
+            ? [() => this.request(value, { cache: 'no-store' }, 60000, signal), () => fetchWithTimeout(value, { cache: 'no-store' }, 60000, signal)]
+            : [() => fetchWithTimeout(value, { cache: 'no-store' }, 60000, signal)];
+        for (const attempt of attempts) {
+            try {
+                const response = await attempt();
+                if (!response.ok) { iigLog('WARN', `${this.displayName}: image download HTTP ${response.status}`); continue; }
+                const bytes = new Uint8Array(await (await response.blob()).arrayBuffer());
+                const startsWith = (...sig) => sig.every((byte, i) => bytes[i] === byte);
+                const mime = startsWith(0x89, 0x50, 0x4E, 0x47) ? 'image/png'
+                    : startsWith(0xFF, 0xD8, 0xFF) ? 'image/jpeg'
+                    : startsWith(0x52, 0x49, 0x46, 0x46) ? 'image/webp'
+                    : startsWith(0x47, 0x49, 0x46) ? 'image/gif' : '';
+                if (!mime) { iigLog('WARN', `${this.displayName}: downloaded file is not an image`); continue; }
+                let binary = '';
+                for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+                return `data:${mime};base64,${btoa(binary)}`;
+            } catch (error) {
+                if (signal?.aborted) throw error;
+                iigLog('WARN', `${this.displayName}: image download failed: ${error?.message || error}`);
+            }
+        }
+        iigLog('WARN', `${this.displayName}: using remote image URL directly: ${value}`);
+        return value;
+    }
+
+    async loadMediaCatalog(settings, signal) {
+        const response = await this.request(`${this.baseUrl(settings)}/media/models`, {
+            headers: { Authorization: `Bearer ${settings.apiKey.trim()}` },
+        }, 30000, signal);
+        if (!response.ok) {
+            const error = await parseOpenAIError(response);
+            throw new ProviderError({ message: `CloseRouter catalog ${error.status}: ${error.message}`, retryable: false, providerId: this.id });
+        }
+        const result = await response.json();
+        this.mediaCatalog = Array.isArray(result.data) ? result.data : [];
+        return this.mediaCatalog;
+    }
+
+    async prepareCloseRequest(settings, prompt, images, aspect, resolution, signal) {
+        const catalog = await this.loadMediaCatalog(settings, signal);
+        const candidates = catalog.filter(entry => entry.model === settings.model).flatMap(entry =>
+            (entry.operations || []).map(operation => ({ entry, operation })),
+        ).filter(({ entry, operation }) => {
+            if (!/^\/v1\/images\/(generations|edits)$/.test(entry.endpoint)) return false;
+            const props = operation.input_schema?.properties || {};
+            const fields = operation.input_image_fields || [];
+            if (images.length && (fields.length !== 1 || !props[fields[0]])) return false;
+            const imageRule = props[fields[0]];
+            if (images.length && (imageRule.maxItems && images.length > imageRule.maxItems)) return false;
+            if (images.length > 1 && imageRule?.type !== 'array') return false;
+            if (!images.length && fields.some(field => operation.input_schema.required?.includes(field))) return false;
+            if (props.aspect_ratio?.enum && !props.aspect_ratio.enum.includes(aspect)) return false;
+            if (props.resolution?.enum && !props.resolution.enum.includes(resolution)) return false;
+            // A route without resolution controls cannot promise 2K or 4K.
+            if (!props.resolution && resolution !== '1K') return false;
+            return true;
+        });
+        // Prefer the edit route when it supports the complete request; Lite
+        // only exposes /generations, even with image inputs.
+        const preferredEndpoint = images.length ? '/edits' : '/generations';
+        candidates.sort((a, b) => Number(b.entry.endpoint.endsWith(preferredEndpoint)) - Number(a.entry.endpoint.endsWith(preferredEndpoint)));
+        if (!candidates.length) throw new ProviderError({
+            message: `CloseRouter: no route supports ${settings.model}, ${images.length} references, ${aspect}, ${resolution}. Reduce references or choose another model/resolution.`,
+            code: 'unsupported_parameters', retryable: false, providerId: this.id,
+        });
+        const { entry, operation } = candidates[0];
+        const props = operation.input_schema.properties;
+        const input = { prompt };
+        for (const field of operation.input_schema.required || []) {
+            if (props[field]?.default != null) input[field] = props[field].default;
+        }
+        if (props.aspect_ratio) input.aspect_ratio = aspect;
+        if (props.resolution) input.resolution = resolution;
+        if (props.output_format?.enum?.includes('png')) input.output_format = 'png';
+        if (images.length) {
+            const field = operation.input_image_fields[0];
+            input[field] = props[field].type === 'array' ? images : images[0];
+        }
+        const body = { model: settings.model, operation: operation.name, input, provider: { option_id: entry.provider_option_id } };
+        const quote = await this.request(`${this.baseUrl(settings)}/media/quote`, {
+            method: 'POST', headers: { Authorization: `Bearer ${settings.apiKey.trim()}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        }, 30000, signal);
+        if (!quote.ok) {
+            const error = await parseOpenAIError(quote);
+            throw new ProviderError({ message: `CloseRouter quote ${error.status}: ${error.message}`, code: error.code, retryable: false, providerId: this.id });
+        }
+        const estimate = await quote.json();
+        if (estimate.reserved_usd == null || !Number.isFinite(Number(estimate.reserved_usd))) throw new Error('CloseRouter returned no reservation estimate.');
+        body.max_cost_usd = estimate.reserved_usd;
+        body.response_format = 'b64_json';
+        return { body, path: entry.endpoint.replace(/^\/v1/, '') };
+    }
+
+    async fetchModels() {
+        const settings = getSettings();
+        if (!settings.apiKey) return [];
+        if (this.id === 'closerouter') {
+            const catalog = await this.loadMediaCatalog(settings);
+            return [...new Set(catalog.filter(entry => entry.operations?.some(op => op.input_image_fields?.length)).map(entry => entry.model).filter(model => this.isSupportedModel(model)))];
+        }
+        const url = `${this.baseUrl(settings)}/models`;
+        const headers = { Authorization: `Bearer ${settings.apiKey.trim()}` };
+        let response;
+        for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+                response = await this.request(url, { headers, cache: 'no-store' }, 30000);
+                if (attempt === 0 && [502, 503, 504].includes(response.status)) {
+                    await response.text();
+                    await abortableDelay(1000);
+                    continue;
+                }
+                break;
+            } catch (error) {
+                const transient = ['AbortError', 'TimeoutError', 'TypeError'].includes(error?.name);
+                if (!transient) throw error;
+                if (attempt === 1) throw new Error(`${this.displayName}: model catalog did not respond after two attempts. Check the SillyTavern server connection to ${new URL(url).host}.`);
+                await abortableDelay(1000);
+            }
+        }
+        if (!response.ok) {
+            const error = await parseOpenAIError(response);
+            throw new Error(`${this.displayName}: HTTP ${error.status}: ${error.message}`);
+        }
+        const result = await response.json();
+        const data = Array.isArray(result.data) ? result.data : [];
+        this.modelCatalogById = new Map(data.map(model => [model.id, model]));
+        return data.map(model => model.id).filter(model => this.isSupportedModel(model));
+    }
+
+    async generate({ prompt, style, references = [], options = {} }) {
+        const settings = { ...getSettings(), model: options.model || getSettings().model };
+        const signal = options.signal;
+        const fail = (message, code = 'invalid_response') => new ProviderError({
+            message: `${this.displayName}: ${message}`, code, retryable: false, providerId: this.id,
+        });
+        const errors = this.validate(settings);
+        if (errors.length) throw fail(errors.join('; '), 'invalid_request');
+        const caps = getGeminiCapabilities(settings.model.replace(/^google\//, ''));
+        const aspect = options.aspectRatio || settings.aspectRatio || '1:1';
+        if (!caps.aspectRatios.includes(aspect)) throw fail(`Unsupported aspect ratio: ${aspect}`, 'invalid_request');
+        const resolution = options.imageSize || settings.imageSize || '1K';
+        const resolutions = this.getImageResolutions(settings);
+        if (resolutions.length && !resolutions.includes(resolution)) throw fail(`Unsupported resolution: ${resolution}. Supported: ${resolutions.join(', ')}`, 'invalid_request');
+        let fullPrompt = buildFinalGenerationPrompt(prompt, style, options.matchedAdditionalRefs || [], settings);
+        const descriptions = references.map((ref, index) => referenceTextLabel(index + 1, getReferenceDescription(ref))).filter(Boolean);
+        if (settings.sendRefDescriptions !== false) fullPrompt = appendPromptBlock(fullPrompt, descriptions.join('\n'));
+        if (references.length && getEffectiveRefInstruction(settings)) fullPrompt = `${getEffectiveRefInstruction(settings)}\n\n${fullPrompt}`;
+        const images = references.map(getReferenceImage);
+        let body = { model: settings.model, prompt: fullPrompt, response_format: 'b64_json' };
+        const isAlt = this.id === 'altrouter';
+        let path = '/images/generations';
+        if (isAlt) {
+            body.async = true;
+            body.aspect_ratio = aspect;
+            if (resolutions.length) body.resolution = resolution;
+            iigLog('INFO', `AltRouter request: model=${settings.model} resolution=${body.resolution || '(not sent)'} aspect=${aspect} refs=${images.length}`);
+            if (images.length) body.image = images;
+        } else {
+            // Resolve the operation before submitting any paid generation.
+            try {
+                ({ body, path } = await this.prepareCloseRequest(settings, fullPrompt, images, aspect, resolution, signal));
+            } catch (error) {
+                if (error instanceof ProviderError) throw error;
+                throw fail(error.message || String(error), signal?.aborted ? 'aborted' : 'preflight_failed');
+            }
+        }
+        const base = this.baseUrl(settings);
+        const url = settings.rawEndpoint ? getEffectiveEndpoint(settings) : `${base}${path}`;
+        const headers = { Authorization: `Bearer ${settings.apiKey}`, 'Content-Type': 'application/json' };
+        if (isAlt) headers['Idempotency-Key'] = crypto.randomUUID();
+        const serialized = JSON.stringify(body);
+        if (!isAlt && new TextEncoder().encode(serialized).length > 20 * 1024 * 1024) {
+            throw fail('Reference images exceed the 20 MiB JSON limit. Use fewer or smaller images.', 'invalid_request');
+        }
+        let taskId = '';
+        try {
+            const deadline = Date.now() + GEMINI_REQUEST_TIMEOUT_MS;
+            let response = await this.request(url, { method: 'POST', headers, body: serialized }, GEMINI_REQUEST_TIMEOUT_MS, signal);
+            while (true) {
+                if (!response.ok) {
+                    const error = await parseOpenAIError(response);
+                    throw fail(`${error.status}: ${error.message}`, error.code);
+                }
+                const result = await response.json();
+                if (result.error || ['failed', 'cancelled', 'canceled', 'expired', 'outcome_unknown'].includes(result.status)) {
+                    throw fail(result.error?.message || result.status, result.error?.code || result.status);
+                }
+                if (result.data?.[0]?.b64_json || result.data?.[0]?.url) return await this.resolveImageUrl(extractImageFromResult(result), signal);
+                taskId = result.id || taskId;
+                if (!taskId || !(response.status === 202 || result.object === 'image.request' || result.object === 'image.generation')) {
+                    throw fail('No image or pending task in response.');
+                }
+                if (Date.now() >= deadline) throw fail(`Waiting timed out (task ${taskId}).`, 'timeout');
+                await abortableDelay(2000, signal);
+                const pollPath = isAlt ? '/images/generations/' : '/media/requests/';
+                response = await this.request(`${base}${pollPath}${encodeURIComponent(taskId)}`, {
+                    headers: { Authorization: headers.Authorization },
+                }, Math.max(1, Math.min(30000, deadline - Date.now())), signal);
+            }
+        } catch (error) {
+            // Never let pipeline retries submit a second paid generation, even
+            // if the connection was lost before we received the task ID.
+            if (error instanceof ProviderError) throw error;
+            throw fail(`${error.message || error}${taskId ? ` (task ${taskId})` : ''}`, signal?.aborted ? 'aborted' : 'request_failed');
+        }
+    }
+}
+
 const providers = new Map();
 
 /** @param {Provider} provider */
@@ -2428,6 +2755,8 @@ export function resolveActiveProvider(settings = getSettings()) {
 registerProvider(new OpenAIProvider());
 registerProvider(new XAIProvider());
 registerProvider(new GeminiProvider());
+registerProvider(new GeminiImageRouterProvider('altrouter', 'AltRouter'));
+registerProvider(new GeminiImageRouterProvider('closerouter', 'CloseRouter'));
 registerProvider(new OpenRouterProvider());
 registerProvider(new ElectronHubProvider());
 registerProvider(new NaisteraProvider());

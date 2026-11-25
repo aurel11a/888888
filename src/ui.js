@@ -229,6 +229,8 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
                 <select id="iig_api_type" class="flex1">
                     <option value="openai" ${settings.apiType === 'openai' ? 'selected' : ''}>${t`OpenAI-compatible (/v1/images/generations)`}</option>
                     <option value="xai" ${settings.apiType === 'xai' ? 'selected' : ''}>xAI Imagine</option>
+                    <option value="altrouter" ${settings.apiType === 'altrouter' ? 'selected' : ''}>AltRouter (Gemini)</option>
+                    <option value="closerouter" ${settings.apiType === 'closerouter' ? 'selected' : ''}>CloseRouter (Gemini)</option>
                     <option value="gemini" ${settings.apiType === 'gemini' ? 'selected' : ''}>${t`Gemini-compatible (nano-banana)`}</option>
                     <option value="openrouter" ${settings.apiType === 'openrouter' ? 'selected' : ''}>${t`OpenRouter (chat/completions)`}</option>
                     <option value="electronhub" ${settings.apiType === 'electronhub' ? 'selected' : ''}>${t`Electron Hub (/v1/images/*)`}</option>
@@ -399,7 +401,7 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
 
             ${buildNovelAISettingsHtml(settings)}
 
-            <div id="iig_avatar_section" class="iig-settings-card-nested ${settings.apiType !== 'gemini' && settings.apiType !== 'openrouter' ? 'iig-hidden' : ''}">
+            <div id="iig_avatar_section" class="iig-settings-card-nested ${!['gemini', 'openrouter', 'altrouter', 'closerouter'].includes(settings.apiType) ? 'iig-hidden' : ''}">
                 <div class="flex-row">
                     <label for="iig_aspect_ratio">${t`Aspect ratio`}</label>
                     <select id="iig_aspect_ratio" class="flex1">
@@ -906,7 +908,7 @@ function buildLorebookBarHtml(settings = getSettings()) {
 function buildReferencesSettingsSectionHtml(settings = getSettings()) {
     const provider = resolveActiveProvider(settings);
     const refsSupported = provider ? provider.supportsReferences(settings) : false;
-    const isGemini = settings.apiType === 'gemini';
+    const isGemini = ['gemini', 'altrouter', 'closerouter'].includes(settings.apiType);
     const isOpenAI = settings.apiType === 'openai';
     const isXAI = settings.apiType === 'xai';
     const isOpenRouter = settings.apiType === 'openrouter';
@@ -917,7 +919,8 @@ function buildReferencesSettingsSectionHtml(settings = getSettings()) {
     // Заголовок секции аватаров — по активному провайдеру. Provider-brand
     // имена не локализуются.
     let avatarRefsTitle;
-    if (isOpenRouter) avatarRefsTitle = 'OpenRouter';
+    if (['altrouter', 'closerouter'].includes(settings.apiType)) avatarRefsTitle = provider.displayName;
+    else if (isOpenRouter) avatarRefsTitle = 'OpenRouter';
     else if (isElectronHub) avatarRefsTitle = 'Electron Hub';
     else if (isXAI) avatarRefsTitle = 'xAI Imagine';
     else if (isOpenAI) avatarRefsTitle = 'OpenAI / GPT Image';
@@ -1447,7 +1450,7 @@ function bindApiSectionEvents(settings, updateVisibility) {
     });
 
     document.getElementById('iig_api_key')?.addEventListener('change', () => {
-        if (settings.apiType === 'naistera') {
+        if (['naistera', 'altrouter', 'closerouter'].includes(settings.apiType)) {
             reloadModelList({ announce: false }).catch(() => { /* handled by fetchModels */ });
         }
     });
@@ -1506,7 +1509,12 @@ function bindApiSectionEvents(settings, updateVisibility) {
      * it is appended as a "(custom)" option so the user doesn't lose it.
      * announce=true shows a toastr with model count / error.
      */
+    let modelLoadSequence = 0;
     async function reloadModelList({ announce = false } = {}) {
+        const sequence = ++modelLoadSequence;
+        const requestedType = settings.apiType;
+        const requestedEndpoint = settings.endpoint;
+        const requestedKey = settings.apiKey;
         const isNaistera = settings.apiType === 'naistera';
         const select = /** @type {HTMLSelectElement|null} */ (document.getElementById(
             isNaistera ? 'iig_naistera_model' : 'iig_model_select',
@@ -1515,8 +1523,16 @@ function bindApiSectionEvents(settings, updateVisibility) {
         btn?.classList.add('loading');
         try {
             const models = await fetchModels();
+            if (sequence !== modelLoadSequence || requestedType !== settings.apiType
+                || requestedEndpoint !== settings.endpoint || requestedKey !== settings.apiKey) return [];
             if (select) {
                 let current = isNaistera ? normalizeNaisteraModel(settings.naisteraModel) : (settings.model || '');
+                if (['altrouter', 'closerouter'].includes(settings.apiType) && models.length && !models.includes(current)) {
+                    current = '';
+                    settings.model = '';
+                    syncModelInputs('');
+                    saveSettings();
+                }
                 if ((isNaistera || settings.apiType === 'novelai') && models.length > 0 && !models.includes(current)) {
                     current = models[0];
                     settings[isNaistera ? 'naisteraModel' : 'model'] = current;
@@ -1528,7 +1544,7 @@ function bindApiSectionEvents(settings, updateVisibility) {
                 const optionsHtml = [
                     ...models.map((m) => `<option value="${sanitizeForHtml(m)}" ${m === current ? 'selected' : ''}>${sanitizeForHtml(provider?.getModelLabel(m) || m)}</option>`),
                     ...(!inList && current ? [`<option value="${sanitizeForHtml(current)}" selected>${sanitizeForHtml(current)}${isNaistera ? '' : ` ${t`(custom)`}`}</option>`] : []),
-                    ...(models.length === 0 && !current ? [`<option value="" selected disabled>${t`-- Select a model --`}</option>`] : []),
+                    ...(!current ? [`<option value="" selected disabled>${t`-- Select a model --`}</option>`] : []),
                 ];
                 select.innerHTML = optionsHtml.join('');
             }
@@ -1549,7 +1565,7 @@ function bindApiSectionEvents(settings, updateVisibility) {
             }
             return [];
         } finally {
-            btn?.classList.remove('loading');
+            if (sequence === modelLoadSequence) btn?.classList.remove('loading');
         }
     }
 
@@ -2713,7 +2729,7 @@ function buildUpdateVisibility(settings) {
         const apiType = settings.apiType;
         const isNaistera = apiType === 'naistera';
         const isNovelAI = apiType === 'novelai';
-        const isGemini = apiType === 'gemini';
+        const isGemini = ['gemini', 'altrouter', 'closerouter'].includes(apiType);
         const isOpenAI = apiType === 'openai';
         const isXAI = apiType === 'xai';
         const isOpenRouter = apiType === 'openrouter';
@@ -2723,6 +2739,19 @@ function buildUpdateVisibility(settings) {
         // Поддерживает ли активный провайдер референсы (учитывая модель).
         const provider = resolveActiveProvider(settings);
         const refsSupported = provider ? provider.supportsReferences(settings) : false;
+        const routerResolutions = provider?.getImageResolutions?.(settings);
+        const imageSizeSelect = document.getElementById('iig_image_size');
+        if (imageSizeSelect) {
+            for (const option of imageSizeSelect.options) {
+                option.disabled = Array.isArray(routerResolutions) && !routerResolutions.includes(option.value);
+            }
+            imageSizeSelect.disabled = Array.isArray(routerResolutions) && routerResolutions.length === 0;
+            if (routerResolutions?.length && !routerResolutions.includes(settings.imageSize)) {
+                settings.imageSize = routerResolutions[0];
+                imageSizeSelect.value = settings.imageSize;
+                saveSettings();
+            }
+        }
         const naisteraRefsSupported = isNaistera && refsSupported;
         const naisteraNegativePromptSupported = isNaistera && provider?.supportsNegativePrompt(settings) === true;
 
@@ -2838,7 +2867,8 @@ function buildUpdateVisibility(settings) {
             // Обновляем заголовок при смене провайдера.
             const titleEl = avatarRefsSection.querySelector('h4');
             if (titleEl) {
-                if (isOpenRouter) titleEl.textContent = 'OpenRouter';
+                if (['altrouter', 'closerouter'].includes(apiType)) titleEl.textContent = resolveActiveProvider(settings).displayName;
+                else if (isOpenRouter) titleEl.textContent = 'OpenRouter';
                 else if (isElectronHub) titleEl.textContent = 'Electron Hub';
                 else if (isXAI) titleEl.textContent = 'xAI Imagine';
                 else if (isOpenAI) titleEl.textContent = 'OpenAI / GPT Image';

@@ -605,6 +605,8 @@ export const DEFAULT_ENDPOINTS = Object.freeze({
     novelai: 'https://image.novelai.net',
     openrouter: 'https://openrouter.ai/api/v1',
     electronhub: 'https://api.electronhub.ai',
+    altrouter: 'https://api.altrouter.ai/v1',
+    closerouter: 'https://api.closerouter.dev/v1',
     a1111: 'http://127.0.0.1:7860',
 });
 
@@ -614,6 +616,8 @@ export const ENDPOINT_PLACEHOLDERS = Object.freeze({
     gemini: 'https://generativelanguage.googleapis.com',
     openrouter: 'https://openrouter.ai/api/v1',
     electronhub: 'https://api.electronhub.ai',
+    altrouter: 'https://api.altrouter.ai/v1',
+    closerouter: 'https://api.closerouter.dev/v1',
     naistera: 'https://naistera.org',
     novelai: 'https://image.novelai.net',
     a1111: 'http://127.0.0.1:7860',
@@ -727,6 +731,7 @@ export function normalizeConfiguredEndpoint(apiType, endpoint) {
         if (apiType === 'novelai') return DEFAULT_ENDPOINTS.novelai;
         if (apiType === 'openrouter') return DEFAULT_ENDPOINTS.openrouter;
         if (apiType === 'electronhub') return DEFAULT_ENDPOINTS.electronhub;
+        if (apiType === 'altrouter' || apiType === 'closerouter') return DEFAULT_ENDPOINTS[apiType];
         if (apiType === 'a1111') return DEFAULT_ENDPOINTS.a1111;
         return '';
     }

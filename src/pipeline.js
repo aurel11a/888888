@@ -185,7 +185,7 @@ function formatProviderError(error) {
  * reference images — OpenAI / ElectronHub (/v1/images/edits), Gemini,
  * OpenRouter, Naistera.
  */
-const REF_INSTRUCTION_PROVIDERS = new Set(['openai', 'xai', 'electronhub', 'gemini', 'openrouter', 'naistera']);
+const REF_INSTRUCTION_PROVIDERS = new Set(['openai', 'xai', 'electronhub', 'gemini', 'openrouter', 'naistera', 'altrouter', 'closerouter']);
 
 /**
  * Приводит любой представление референса (base64 строка или data URL)
@@ -247,6 +247,13 @@ function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs
         if (avatarDescriptions) {
             snapshotPrompt = `${snapshotPrompt}\n\n${avatarDescriptions}`.trim();
         }
+    }
+    if (['altrouter', 'closerouter'].includes(settings.apiType) && settings.sendRefDescriptions !== false) {
+        const descriptions = references.map((ref, index) => {
+            const description = getReferenceDescription(ref).replace(/\s+/g, ' ').trim();
+            return description ? `Reference ${index + 1}: ${description}` : '';
+        }).filter(Boolean);
+        if (descriptions.length) snapshotPrompt += `\n\n${descriptions.join('\n')}`;
     }
     if (characterDescriptionPromptBlock) {
         snapshotPrompt = `${snapshotPrompt}\n\n${characterDescriptionPromptBlock}`.trim();
@@ -487,6 +494,11 @@ export async function persistGeneratedMedia(generated, statusEl, meta) {
                 apiType,
             });
         }
+    } else if (typeof generated === 'string' && /^https?:\/\//i.test(generated)) {
+        // The provider could not turn the remote file into a data URL (CDN blocked
+        // the download). Show the remote URL as-is instead of failing the image.
+        iigLog('WARN', `Using remote image URL without saving locally: ${generated.slice(0, 160)}`);
+        persistedSrc = generated;
     } else {
         if (statusEl) statusEl.textContent = t`Saving...`;
         persistedSrc = await saveImageToFile(generated, {
